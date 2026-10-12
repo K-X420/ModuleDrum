@@ -122,7 +122,7 @@ juce_add_console_app(MnmMdTest PRODUCT_NAME "md-plugintest")
 target_sources(MnmMdTest PRIVATE md/MdPluginTest.cpp md/test/MdTestSeq.cpp md/test/MdTestEdit.cpp md/test/MdTestMidi.cpp md/test/MdTestEngine.cpp md/test/MdTestExtras.cpp md/test/MdTestTools.cpp ${MNM_MD_PROC_SOURCES} ${MNM_MD_UI_SOURCES})
 target_include_directories(MnmMdTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/md)
 target_compile_definitions(MnmMdTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=0
-  JucePlugin_Name="Monomodule MD" JUCE_STANDALONE_APPLICATION=1)
+  JucePlugin_Name="Monomodule MD" JUCE_STANDALONE_APPLICATION=1 JucePlugin_VersionString="${PROJECT_VERSION}")
 target_link_libraries(MnmMdTest PRIVATE mdcore mnmlibrary juce::juce_audio_utils juce::juce_recommended_config_flags)
 
 # Offscreen editor renderer for UI review (a development tool, not installed)

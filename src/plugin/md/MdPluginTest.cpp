@@ -407,6 +407,7 @@ int main(int argc, char** argv)
                 else med->devMarkMode(8);
                 med->refresh();
             }
+            if (std::getenv("MD_UI_MIX")) { med->devToggleMixer(); med->refresh(); }   // dev: the mixer open
             if (std::getenv("MD_UI_KITS")) med->showKitList();
             if (std::getenv("MD_UI_ABOUT")) med->showAbout();
             if (std::getenv("MD_UI_SKIN")) med->showSkinDialog();

@@ -9,6 +9,24 @@ Monomachine's own sound engine inside an emulated Motorola DSP56300, so it match
 > contains no Elektron software. To make sound it needs the Monomachine OS file, which you download from Elektron
 > yourself (see [Getting the OS file](#getting-the-os-file)).
 
+## Screenshots
+
+Monomodule MD:
+
+![Monomodule MD: a track's SYNTHESIS, EFFECTS, ROUTING and LFO pages over the 16 track keys](docs/screenshots/md.png)
+
+| | |
+|---|---|
+| ![The machine picker](docs/screenshots/md-picker.png) The machine picker | ![The mixer](docs/screenshots/md-mixer.png) The mixer |
+| ![GRID with two steps held for parameter locks](docs/screenshots/md-grid.png) GRID: the keys are steps; two held for parameter locks, the track 12 steps long | ![The lock lane](docs/screenshots/md-lane.png) The lock lane: one parameter's locks across the page |
+| ![Trig conditions](docs/screenshots/md-conditions.png) Trig conditions (with XTRA on) | |
+
+Monomodule One and Six:
+
+| | |
+|---|---|
+| ![Monomodule One](docs/screenshots/one.png) Monomodule One | ![Monomodule Six](docs/screenshots/six.png) Monomodule Six |
+
 ## What's included
 
 | | Type | What it does |
