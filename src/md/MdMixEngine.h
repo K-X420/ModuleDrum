@@ -60,6 +60,19 @@ public:
     const std::string& faultReason() const { return m_fault; }
     uint64_t lastBlockInstructions() const { return m_lastInstr; }
     uint64_t lastBlockExecs() const { return m_lastExecs; }   // dev: the JIT blocks entered from the host loop
+    // Idle strips are not run. A track's strip (P:0xA2..0x25D: its AM, EQ, filter, sample rate reduction and distortion
+    // over the block's 32 samples) reads its 32 input words, its 64-word state block (Y:0x200 + 0x40 t, the host's
+    // parameter words among them) and the tables, and writes that block and its 32 output words. When a run with an
+    // all-zero input left the block exactly as it found it, the next run from the same block with a zero input would
+    // write the same words again: it is left out (a bit a track in Y:kSkipMask, tested by a stub hooked in at
+    // P:0xA4), until the input, a parameter or the track's place among the outputs changes. The result is the same
+    // word for word (md-plugintest MD_STRIP_TEST runs both ways side by side); off: every strip runs, as the unit's.
+    void setSkipIdleStrips(bool on) { m_skipIdle = on; }
+    // Verify: nothing is left out, and each strip that would have been is checked against what was expected of it
+    // (its state block and output after the run); skipMismatches counts the ones that came out otherwise.
+    void setVerifySkips(bool on) { m_verifySkips = on; }
+    int skipMismatches() const { return m_skipMismatches; }
+    int skippedStrips() const { return m_skipped; }   // in the last block
     void setEntryHistogram(std::map<uint32_t, uint64_t>* h) { m_entryHist = h; }   // dev: counts each host-loop entry by its PC
     void setStepInterpreted(bool on) { m_stepInterpreted = on; }   // dev: an instruction at a time (with the histogram: every PC run)
 
@@ -76,6 +89,17 @@ private:
     uint64_t m_lastInstr = 0, m_lastExecs = 0;
     std::map<uint32_t, uint64_t>* m_entryHist = nullptr;
     bool m_stepInterpreted = false;
+    struct Strip {
+        bool idle = false;                   // its last run: zero in, the state block as idleStep takes it, the same output
+        bool ranZero = false;                // this block's run has a zero input
+        uint32_t outPtr = 0;                 // where its output was written (X)
+        std::array<uint32_t, 0x40> state{};  // the block after its last run (before this block's: scratch)
+        std::array<uint32_t, 32> out{};      // its output then
+    };
+    std::array<Strip, VoiceEngine::kTracks> m_strips{};
+    bool m_skipIdle = true, m_verifySkips = false;
+    int m_skipped = 0, m_skipMismatches = 0;
+    static std::array<uint32_t, 0x40> idleStep(const std::array<uint32_t, 0x40>& state);
     std::array<std::array<uint32_t, 5>, VoiceEngine::kTracks> m_routing{};
     uint32_t m_direct = 0;
 };

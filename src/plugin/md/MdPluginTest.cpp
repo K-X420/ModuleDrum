@@ -89,6 +89,7 @@ int main(int argc, char** argv)
     if (const char* v = std::getenv("MD_BENCH")) return test::mdBench(env, v);
     if (const char* v = std::getenv("MD_INPUT_TEST")) return test::mdInputTest(env, v);
     if (const char* v = std::getenv("MD_TICK_TEST")) return test::mdTickTest(env, v);
+    if (const char* v = std::getenv("MD_STRIP_TEST")) return test::mdStripTest(env, v);
     bool kitLoaded = false;
     // MD_OUTS_TEST: every output bus live, PER TRACK outputs (MD_OUTS_OFF=n leaves track n's bus off: it stays on
     // the main); prints each bus's level. MD_OUTS_TEST=hw: the same buses in HARDWARE mode

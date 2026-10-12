@@ -7,6 +7,7 @@
 #include "dsp56kEmu/memory.h"
 #include "dsp56kEmu/peripherals.h"
 #include "dsp56kEmu/jit.h"
+#include "dsp56kEmu/assembler.h"
 
 namespace mnm::md {
 
@@ -19,6 +20,11 @@ constexpr TWord kBlockStart = 0x44;    // after the DAC-half poll: input X:0x100
 constexpr TWord kParkPc = 0xF40;       // free internal P (the image uses P:0..0xA07)
 constexpr TWord kVoiceRing = 0x600;
 constexpr TWord kDacHalf = 0x400;
+constexpr TWord kSkipStub = 0xF50;     // free internal P: the idle-strip test
+constexpr TWord kSkipMask = 0xF60;     // free Y: bit t = track t's strip is left out of this block
+constexpr TWord kStripHook = 0xA4;     // 'lua (r6+$22),r4', the strip's first instruction after the track's pointers
+constexpr TWord kStripState = 0x200;   // Y: 0x40 words a track
+constexpr TWord kStripSrrCount = 0x1C, kStripAmPhase = 0x25;   // in it: the two words that run on in silence
 constexpr uint64_t kMaxExecBoot = 20'000'000;
 constexpr uint64_t kMaxExecBlock = 4'000'000;
 }
@@ -54,6 +60,28 @@ void MixEngine::reset()
     m_dsp->memWriteP(0x39, 0x000000);                 // boot ADC wait 'bne $36' -> nop
     m_dsp->memWriteP(0x79, 0x000000);                 // voice wait 'blt $73' -> nop
     m_dsp->memWriteP(0x9A8, 0x0C0000 | kParkPc);      // end of block 'bra $3c' -> jmp <park
+    {   // the idle-strip test, hooked in where a track's strip begins (A is free there: loaded again at P:0xA7):
+        //   the mask's lowest bit into the carry (a track a turn, in track order); set: on to the next track
+        Assembler as;
+        TWord pc = kSkipStub;
+        auto emit = [&](const char* text) {
+            const auto r = as.assemble(text);
+            if (!r.success()) throw std::runtime_error(std::string("MD mixer: cannot assemble '") + text + "'");
+            m_dsp->memWriteP(pc++, r.word[0]);
+            if (r.wordCount > 1) m_dsp->memWriteP(pc++, r.word[1]);
+        };
+        const TWord displaced = m_mem->get(MemArea_P, kStripHook);
+        if (displaced != 0x041624) throw std::runtime_error("MD mixer: the strip is not where OS 1.63 has it");
+        emit("move y:>$f60,a");
+        m_dsp->memWriteP(pc++, 0x200023);            // lsr a
+        emit("move a1,y:>$f60");
+        m_dsp->memWriteP(pc++, 0x0E8000 | 0x06F);    // jcs <$6f: the next track
+        m_dsp->memWriteP(pc++, displaced);           // lua (r6+$22),r4
+        m_dsp->memWriteP(pc++, 0x0C0000 | (kStripHook + 1));   // jmp back into the strip
+        m_dsp->memWriteP(kStripHook, 0x0C0000 | kSkipStub);
+        m_dsp->memWrite(MemArea_Y, kSkipMask, 0);
+    }
+    for (auto& s : m_strips) s = Strip();
     m_dsp->setPC(m_fw.mixDsp.startAddr.value_or(0x24));
     if (!runToPark(kMaxExecBoot)) throw std::runtime_error("MD DSP1 boot did not finish: " + m_fault);
 }
@@ -143,14 +171,74 @@ int32_t MixEngine::peekX(uint32_t addr) const { return int32_t(m_mem->get(MemAre
 int32_t MixEngine::peekY(uint32_t addr) const { return int32_t(m_mem->get(MemArea_Y, addr) << 8) >> 8; }
 uint32_t MixEngine::peekP(uint32_t addr) const { return m_mem->get(MemArea_P, addr); }
 
+// An idle strip's block one block on. With a zero input everything in it stays as it is but two free-running words:
+//   +0x25  the AM oscillator's place in its 0x8000-word table: 32 samples x the rate (word +1, >> 3) on (P:0xB9..0xD1)
+//   +0x1C  the sample rate reducer's counter: 0x10 a sample, less its period whenever it reaches it (P:0x221..0x233),
+//          the period from word +7 as the strip works it out: ((2 (w + 0x4000)^2 - 0x20) << 2) + 0x10 in A1's units
+// (renderBlock only trusts this for a strip whose last run came out exactly so.)
+std::array<uint32_t, 0x40> MixEngine::idleStep(const std::array<uint32_t, 0x40>& state)
+{
+    auto sext = [](uint32_t w) { return int64_t(int32_t(w << 8) >> 8); };
+    auto next = state;
+    const int64_t rate = sext(state[1]) >> 3;
+    next[kStripAmPhase] = (state[kStripAmPhase] & 0xFF8000u) | uint32_t((int64_t(state[kStripAmPhase] & 0x7FFF) + 32 * rate) & 0x7FFF);
+    const int64_t x0 = sext(state[7]) + 0x4000;                                   // A1, then X0
+    const int64_t acc = (((x0 * x0 * 2) - (int64_t(0x20) << 24)) << 2) + (int64_t(0x10) << 24);   // A1:A0
+    const int64_t period = acc >> 24;                                             // X1 = A1
+    int64_t count = sext(state[kStripSrrCount]);
+    for (int i = 0; i < 32; ++i) { count += 0x10; if (count >= period) count -= period; }
+    next[kStripSrrCount] = uint32_t(count) & 0xFFFFFF;
+    return next;
+}
+
 bool MixEngine::renderBlock(const VoiceEngine::Block& voices, Output& out)
 {
     if (m_faulted) { for (auto& f : out) f.fill(0); return false; }
     for (int t = 0; t < VoiceEngine::kTracks; ++t)
         for (int i = 0; i < kFrames; ++i)
             m_dsp->memWrite(MemArea_Y, kVoiceRing + TWord(t * kFrames + i), TWord(voices[size_t(t)][size_t(i)]) & 0xFFFFFF);
+    // which strips are idle (see setSkipIdleStrips): the track's output place as the DSP will count it out
+    TWord mask = 0, would = 0, mainBlock = 0x200, otherBlock = 0x3E0;
+    std::array<TWord, VoiceEngine::kTracks> outPtr{};
+    m_skipped = 0;
+    for (int t = 0; t < VoiceEngine::kTracks; ++t) {
+        auto& s = m_strips[size_t(t)];
+        const bool main = (m_mem->get(MemArea_Y, 0x100 + 5 * TWord(t)) & 0xFFFFFF) == 6;
+        outPtr[size_t(t)] = main ? mainBlock : otherBlock;
+        if (main) mainBlock += 0x20; else otherBlock -= 0x20;
+        bool zero = true;
+        for (int i = 0; i < kFrames && zero; ++i) zero = (TWord(voices[size_t(t)][size_t(i)]) & 0xFFFFFF) == 0;
+        bool skip = zero && s.idle && s.outPtr == outPtr[size_t(t)];
+        const TWord base = kStripState + 0x40 * TWord(t);
+        for (TWord k = 0; skip && k < 0x40; ++k) skip = m_mem->get(MemArea_Y, base + k) == s.state[k];
+        for (TWord k = 0; skip && k < 32; ++k) skip = m_mem->get(MemArea_X, s.outPtr + k) == s.out[k];
+        s.ranZero = zero;
+        if (skip && m_skipIdle && !m_verifySkips) {   // left out: its two free-running words go on as the strip would take them
+            const auto next = idleStep(s.state);
+            for (TWord k : {kStripSrrCount, kStripAmPhase})
+                if (next[k] != s.state[k]) m_dsp->memWrite(MemArea_Y, base + k, next[k]);
+            s.state = next;
+            mask |= TWord(1) << t; ++m_skipped;
+            continue;
+        }
+        if (skip) would |= TWord(1) << t;   // (verify: it runs, and has to come out as idleStep says)
+        for (TWord k = 0; k < 0x40; ++k) s.state[k] = m_mem->get(MemArea_Y, base + k);   // it runs: the block as it goes in
+    }
+    m_dsp->memWrite(MemArea_Y, kSkipMask, mask);
     m_dsp->setPC(kBlockStart);
-    if (!runToPark(kMaxExecBlock)) { for (auto& f : out) f.fill(0); return false; }
+    if (!runToPark(kMaxExecBlock)) { for (auto& f : out) f.fill(0); for (auto& s : m_strips) s.idle = false; return false; }
+    for (int t = 0; t < VoiceEngine::kTracks; ++t) {
+        if ((mask >> t) & 1) continue;
+        auto& s = m_strips[size_t(t)];
+        const TWord base = kStripState + 0x40 * TWord(t);
+        const auto expect = idleStep(s.state);
+        bool same = s.ranZero && s.outPtr == outPtr[size_t(t)];
+        for (TWord k = 0; k < 0x40; ++k) { const TWord w = m_mem->get(MemArea_Y, base + k); same = same && w == expect[k]; s.state[k] = w; }
+        s.outPtr = outPtr[size_t(t)];
+        for (TWord k = 0; k < 32; ++k) { const TWord w = m_mem->get(MemArea_X, s.outPtr + k); same = same && w == s.out[k]; s.out[k] = w; }
+        if (((would >> t) & 1) && !same) ++m_skipMismatches;
+        s.idle = same;   // zero in, the block as idleStep takes it, the output as it was: the next such block is known
+    }
     for (int i = 0; i < kFrames; ++i)
         for (int c = 0; c < kChannels; ++c) {
             const TWord w = m_mem->get(MemArea_X, kDacHalf + TWord(i * kChannels + c)) & 0xFFFFFF;
