@@ -87,6 +87,7 @@ int main(int argc, char** argv)
     if (const char* v = std::getenv("MD_XTRA_TEST")) return test::mdXtraTest(env, v);
     if (const char* v = std::getenv("MD_TOOLS_TEST")) return test::mdToolsTest(env, v);
     if (const char* v = std::getenv("MD_BENCH")) return test::mdBench(env, v);
+    if (const char* v = std::getenv("MD_DEMO")) return test::mdDemo(env, v);
     if (const char* v = std::getenv("MD_INPUT_TEST")) return test::mdInputTest(env, v);
     if (const char* v = std::getenv("MD_TICK_TEST")) return test::mdTickTest(env, v);
     if (const char* v = std::getenv("MD_STRIP_TEST")) return test::mdStripTest(env, v);

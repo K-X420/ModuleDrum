@@ -31,6 +31,7 @@ int mdToolsTest(TestEnv& env, const char* value);
 int mdInputTest(TestEnv& env, const char* value);
 int mdTickTest(TestEnv& env, const char* value);
 int mdStripTest(TestEnv& env, const char* value);
-int mdBench(TestEnv& env, const char* value);   // MD_BENCH: timing, not a check
+int mdBench(TestEnv& env, const char* value);
+int mdDemo(TestEnv& env, const char* value);    // MD_DEMO=footwork: a demo beat rendered to the output file   // MD_BENCH: timing, not a check
 
 } // namespace mnm::plugin::md::test
