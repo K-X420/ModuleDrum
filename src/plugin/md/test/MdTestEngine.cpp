@@ -14,6 +14,69 @@
 
 namespace mnm::plugin::md::test {
 
+// MD_BENCH (not a check: numbers): the engine's cost per 32-frame pass, the voices' DSP and the rest (the mixer's DSP,
+// the control side), every track trigged four times a second. The best of five rounds, as % of real time.
+int mdBench(TestEnv& env, const char* value)
+{
+    juce::ignoreUnused(value);
+    auto* e = env.proc.engineForTests();
+    if (!e) return 1;
+    const int passes = 2756;   // 2 s
+    mnm::md::VoiceEngine::Block scratch;
+    mnm::md::MixEngine::Output mixOut;
+    double best[4] = {1e9, 1e9, 1e9, 1e9};
+    for (int round = 0; round < 5; ++round) {
+        for (int mode = 0; mode < 4; ++mode) {   // 0 the whole engine, 1 the voices' DSP, 2 the mixer's DSP, 3 the control tick
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            for (int i = 0; i < passes; ++i) {
+                if (i % 344 == 0) for (int t = 0; t < 16; ++t) e->trig(t, env.proc.machineIdOf(t), -128);
+                if (mode == 0) e->render();
+                else if (mode == 1) e->voices().renderPass(scratch);
+                else if (mode == 2) e->mixer().renderBlock(scratch, mixOut);
+                else e->cpu().tick((i & 3) == 0);
+            }
+            best[mode] = std::min(best[mode], juce::Time::getMillisecondCounterHiRes() - t0);
+        }
+    }
+    const double real = passes * 32.0 / 44100.0 * 1000.0;
+    std::printf("BENCH engine %.1f%% of real time (voices %.1f%%, mixer %.1f%%, control tick %.1f%%); %llu + %llu instr/pass\n",
+                100.0 * best[0] / real, 100.0 * best[1] / real, 100.0 * best[2] / real, 100.0 * best[3] / real,
+                (unsigned long long)e->voices().lastPassInstructions(), (unsigned long long)e->mixer().lastBlockInstructions());
+    return 0;
+}
+
+// MD_INPUT_TEST: the audio input reaches the engine whole at any host buffer (the INP machines, RAM-R's external input)
+int mdInputTest(TestEnv& env, const char* value)
+{
+    juce::ignoreUnused(value);
+    int fails = 0;
+    auto check = [&](bool ok, const juce::String& what) { std::printf("  %s %s\n", ok ? "ok  " : "FAIL", what.toRawUTF8()); fails += ok ? 0 : 1; };
+    for (const double rate : {44100.0, 48000.0, 96000.0})
+        for (const int block : {32, 64, 256, 512, 2048}) {
+            auto pHeap = std::make_unique<MdProcessor>();
+            auto& p = *pHeap;
+            p.setFirmwarePath(juce::String(env.argv[1]), false);
+            p.enableAllBuses();
+            p.setRateAndBufferSizeDetails(rate, block);
+            p.prepareToPlay(rate, block);
+            juce::AudioBuffer<float> buf(p.getTotalNumOutputChannels() > p.getTotalNumInputChannels() ? p.getTotalNumOutputChannels() : p.getTotalNumInputChannels(), block);
+            const int blocks = int(rate * 2.0 / block);
+            int64_t frames = 0;
+            for (int i = 0; i < blocks; ++i) {
+                juce::MidiBuffer midi;
+                for (int c = 0; c < buf.getNumChannels(); ++c) for (int s = 0; s < block; ++s) buf.setSample(c, s, 0.25f);
+                p.processBlock(buf, midi);
+                frames += block;
+            }
+            const double engineFrames = double(frames) * 44100.0 / rate;
+            const double lost = double(p.devInputPadded() + p.devInputDropped()) / engineFrames;
+            check(lost < 0.01, juce::String(rate / 1000.0, 1) + " kHz, buffer " + juce::String(block) + ": " + juce::String(lost * 100.0, 2)
+                  + "% of the input lost (padded " + juce::String(p.devInputPadded()) + ", dropped " + juce::String(p.devInputDropped()) + ")");
+        }
+    std::printf(fails ? "INPUT TEST FAILED (%d)\n" : "INPUT TEST OK\n", fails);
+    return fails ? 1 : 0;
+}
+
 // MD_RATE_TEST: upstream issue #3: no rhythmic clicks at 48 / 96 kHz (a held GND-SN sine, block 512)
 int mdRateTest(TestEnv& env, const char* value)
 {

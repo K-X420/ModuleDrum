@@ -63,6 +63,7 @@ MdProcessor::MidiSettings MdProcessor::fromGlobal(const mnm::mddump::Global& g, 
         s.noteAction[size_t(i)] = int16_t(k >= 16 && k < 16 + 128 ? k - 16 : k == 0x90 ? kStartNote : k == 0x91 ? kStopNote : -1);
     }
     s.patternNoteMode = juce::jlimit(0, 2, int(g.trigMode));
+    s.ctrlIn = g.ctrlIn();   // the global's CTRL IN (off: the host's play / stop don't run the sequencer)
     return s;
 }
 

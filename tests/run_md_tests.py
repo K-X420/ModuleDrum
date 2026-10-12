@@ -9,7 +9,7 @@ The library the checks write to is a temporary folder (MNM_LIBRARY_DIR), never y
 import argparse, glob, os, subprocess, sys, tempfile
 
 SUITES = ['GROUP', 'SEQ', 'EDIT', 'GRID', 'REC', 'SONGED', 'MIDI', 'MIXER', 'CTR', 'PARITY', 'OSCHECK', 'RATE', 'FOUR',
-          'RAM', 'XTRA', 'ARROW']
+          'RAM', 'XTRA', 'INPUT', 'ARROW']
 
 
 def find_exe(build):

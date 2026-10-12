@@ -132,6 +132,7 @@ void MdProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     for (auto& i : m_interp) i.reset();
     for (auto& f : m_inFifo) f.assign(size_t(cap + 64), 0.0f);
     m_inLen = 0;
+    m_inFrac = 0.0;
     for (auto& i : m_inInterp) i.reset();
     m_pending.clear();
     m_pending.reserve(1024);
@@ -254,6 +255,7 @@ void MdProcessor::runPass()
             m_inBlock[size_t(2 * i + c)] = int32_t(std::lround(juce::jlimit(-1.0f, 1.0f, v) * 8388607.0f));
         }
     const int take = std::min(kBlock, m_inLen);
+    if (m_inActive) m_inPadded += kBlock - take;
     for (auto& f : m_inFifo) std::copy(f.begin() + take, f.begin() + m_inLen, f.begin());
     m_inLen -= take;
     m_engine->setInput(m_inBlock.data());
@@ -324,7 +326,9 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
     if (getBusCount(true) > 0 && getBus(true, 0)->isEnabled() && !m_inFifo[0].empty()) {
         auto in = getBusBuffer(buffer, true, 0);
         const double toEngine = kEngineRate / m_hostRate;
-        const int frames = int(std::floor(n * toEngine));
+        m_inFrac += n * toEngine;   // the fraction of a frame carries over (rounding each block down loses input)
+        const int frames = int(std::floor(m_inFrac));
+        m_inFrac -= frames;
         const int need = m_inLen + frames + 8;
         if (int(m_inFifo[0].size()) < need) for (auto& f : m_inFifo) f.resize(size_t(need));
         for (int c = 0; c < 2 && in.getNumChannels() > 0; ++c) {
@@ -334,12 +338,8 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
             else m_inInterp[size_t(c)].process(1.0 / toEngine, src, dst, frames, n, 0);
         }
         m_inLen = std::min(m_inLen + frames, int(m_inFifo[0].size()));
-        if (m_inLen > 4 * kBlock) {   // keep the input close to real time
-            const int drop = m_inLen - 2 * kBlock;
-            for (auto& f : m_inFifo) std::copy(f.begin() + drop, f.begin() + m_inLen, f.begin());
-            m_inLen -= drop;
-        }
-    }
+        m_inActive = true;
+    } else m_inActive = false;
     buffer.clear();
     m_hostPlaying = false;
     if (auto* ph = getPlayHead())
@@ -501,6 +501,14 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
                 }
         }
         runPass();
+    }
+    // the input left over once this block's passes have taken theirs: kept close to real time (a whole host block
+    // comes in before its passes run, so this is only checked after them)
+    if (m_inLen > 4 * kBlock) {
+        const int drop = m_inLen - 2 * kBlock;
+        for (auto& f : m_inFifo) std::copy(f.begin() + drop, f.begin() + m_inLen, f.begin());
+        m_inLen -= drop;
+        m_inDropped += drop;
     }
     m_logClock += n;
 

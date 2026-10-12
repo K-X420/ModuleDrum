@@ -93,9 +93,8 @@ int retrigHits(uint8_t r);                         // hits a step, 0 off
 std::string retrigName(uint8_t r);                 // "1/32", "1/64x2" (two steps), "" off
 
 struct SongRow {
-    uint8_t bytes[10] = {};                            // pattern, kit, loops, jump, mutes (2), tempo (2), start, end
+    uint8_t bytes[10] = {};                            // pattern, - (always 0), loops, jump, mutes (2), tempo (2), start, end
     int pattern() const { return bytes[0]; }
-    int kit() const { return bytes[1]; }
 };
 
 struct Song {
@@ -117,7 +116,9 @@ struct Global {
     uint8_t keyMap[128] = {};
     // keyMap: 0..15 a track, 16 + n pattern n, 0x90 START, 0x91 STOP, else none. trigMode = the pattern notes' mode
     // (MainOS 0x20D104): 0 GATE, 1 MOMENTARY (the pattern before comes back at the note-off), 2 QUEUE
+    // flags (the sync settings): 0x01 TEMPO IN external, 0x10 CTRL IN off (set = off), 0x20 TEMPO OUT, 0x40 CTRL OUT
     uint8_t baseChannel = 0, programChange = 0, trigMode = 0, flags = 0;
+    bool ctrlIn() const { return (flags & 0x10) == 0; }
     int tempo = 120 * 24;
     int trackOfNote(int note) const { return note >= 0 && note < 128 && keyMap[note] < kTracks ? keyMap[note] : -1; }
 };

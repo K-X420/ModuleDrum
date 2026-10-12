@@ -144,6 +144,8 @@ public:
     void clearSolo() { m_solo.store(0); }
     bool silenced(int t) const { const auto s = m_solo.load(); return m_tracks[size_t(t)].mute->load() >= 0.5f || (s != 0 && !((s >> t) & 1u)); }
     mnm::md::Engine* engineForTests() { return m_engine.get(); }   // dev: md-plugintest probes
+    int64_t devInputPadded() const { return m_inPadded; }
+    int64_t devInputDropped() const { return m_inDropped; }
 
     // Pattern playback (message thread): the pattern bank is a project's patterns and kits (kept in the plugin state).
     // The editor sets it from the project of a kit loaded from the library.
@@ -349,6 +351,9 @@ private:
     // side-chain input for the INP machines, resampled to the engine rate
     std::array<std::vector<float>, 2> m_inFifo;
     int m_inLen = 0;
+    double m_inFrac = 0.0;                   // input frames owed from the blocks before (a fraction)
+    bool m_inActive = false;                 // the input bus is on (this block)
+    int64_t m_inPadded = 0, m_inDropped = 0; // dev: input frames the passes had to make up with silence / thrown away
     std::array<juce::LagrangeInterpolator, 2> m_inInterp;
     std::array<int32_t, 64> m_inBlock{};
     // seq: index into m_seqTrigs (a sequencer trig with its locks / slides / accent), -1 = a MIDI note or the UI
