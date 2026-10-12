@@ -20,7 +20,7 @@ public:
     void setFavourite(const juce::String& id, bool on);   // catalog id; saved at once
     const mnm::dump::Dump* state(const juce::String& projectId) const { auto it = m_states.find(projectId); return it == m_states.end() ? nullptr : &it->second; }
     int revision() const { return m_revision; }   // bumps with every rebuild: views compare it
-    // Machinedrum projects and the sounds saved from Monomodule MD, in a catalog of their own
+    // Machinedrum projects and the sounds saved from ModuleDrum, in a catalog of their own
     const mnm::mdcatalog::Catalog& mdCatalog() const { return m_mdCatalog; }
     const mnm::mddump::Dump* mdState(const juce::String& projectId) const { auto it = m_mdStates.find(projectId); return it == m_mdStates.end() ? nullptr : &it->second; }
 
@@ -37,7 +37,7 @@ public:
     juce::Result saveKit(const mnm::dump::Kit& kit, const juce::String& name, const juce::String& parentId,
                          const juce::String& savedFrom, const Slot& into, juce::String* kitIdOut = nullptr);
 
-    // Monomodule MD: the same, for a Machinedrum sound (one track) or kit; `into` names a slot of an MD project.
+    // ModuleDrum: the same, for a Machinedrum sound (one track) or kit; `into` names a slot of an MD project.
     Slot projectSlotOfMdSound(const std::string& soundId) const;
     Slot projectSlotOfMdKit(const std::string& kitId) const;
     juce::Result saveMdSound(const mnm::mdcatalog::Sound& sound, const juce::String& name, const juce::String& parentId,

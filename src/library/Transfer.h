@@ -36,7 +36,7 @@ juce::File writeKitDragFile(const mnm::dump::Kit& kit, const juce::String& baseN
 juce::File writePatternMidiDragFile(const mnm::dump::Dump& dump, const mnm::dump::Pattern& pat, int track);
 
 // Machinedrum: a sound (.mdsound: one track's machine, parameters and LFO) or a kit (.mdkit: the kit message itself,
-// lossless), dragged from the Library app onto Monomodule MD.
+// lossless), dragged from the Library app onto ModuleDrum.
 constexpr const char* kMdSoundFileExtension = ".mdsound";
 constexpr const char* kMdKitFileExtension = ".mdkit";
 struct MdTransferPayload {

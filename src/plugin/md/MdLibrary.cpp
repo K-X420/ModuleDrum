@@ -9,7 +9,7 @@ using namespace mnm::library;
 
 namespace {
 juce::String U(const std::string& s) { return juce::String(s).toUpperCase(); }
-constexpr const char* kSavedFrom = "Monomodule MD";
+constexpr const char* kSavedFrom = "ModuleDrum";
 
 // The plugin-only library of earlier builds: dumps/<id>/original.syx, kits/<id>.json (its own kit JSON)
 juce::File legacyRoot()

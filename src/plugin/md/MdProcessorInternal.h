@@ -1,4 +1,4 @@
-// Monomodule MD's processor, the parts its files share
+// ModuleDrum's processor, the parts its files share
 #pragma once
 #include "MdProcessor.h"
 #include "SharedSettings.h"

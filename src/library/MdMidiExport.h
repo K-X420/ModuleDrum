@@ -1,8 +1,8 @@
 // Machinedrum pattern -> Standard MIDI File, for dragging a pattern (or one track) into the DAW, as MidiExport.h does
-// for the Monomachine. Each trig is a note on its track's trig note (the Machinedrum's default map, which Monomodule MD
+// for the Monomachine. Each trig is a note on its track's trig note (the Machinedrum's default map, which ModuleDrum
 // plays: 36 38 40 41 43 45 47 48 50 52 53 55 57 59 60 62), a sixteenth long; accents are velocity 127 (others 100), so
 // both VOLUME and ACCENT velocity modes hear them; swing moves the swung steps; parameter locks are the CCs of the
-// Machinedrum's map (channel 1 + track / 4, Monomodule MD's CC map), the kit's value sent back after a locked step.
+// Machinedrum's map (channel 1 + track / 4, ModuleDrum's CC map), the kit's value sent back after a locked step.
 #pragma once
 #include <array>
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -15,7 +15,7 @@ juce::MidiFile buildMdTrackMidiFile(const mnm::mddump::Kit* kit, const mnm::mddu
 juce::MidiFile buildMdPatternMidiFile(const mnm::mddump::Kit* kit, const mnm::mddump::Pattern& pat);   // a MIDI track per track with trigs
 int mdTrackNote(int track);
 
-// A MIDI file (an Ableton clip dropped on Monomodule MD) into a pattern, as the export writes one: each note onto the
+// A MIDI file (an Ableton clip dropped on ModuleDrum) into a pattern, as the export writes one: each note onto the
 // track its number maps to (noteTrack, -1 = none), or every note onto onlyTrack (>= 0: a clip dropped on a track key);
 // times to the nearest step at the pattern's speed, velocity 112 and up as an accent, the CC map's controllers at a
 // trig as that trig's locks (a value equal to the kit's, a lock's way back, is left out). The tracks the clip plays

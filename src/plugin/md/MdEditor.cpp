@@ -1,4 +1,4 @@
-// Monomodule MD's editor: building the panels, the knob pages, the timer, the layout
+// ModuleDrum's editor: building the panels, the knob pages, the timer, the layout
 #include "MdEditorInternal.h"
 #include <cmath>
 #include "ShnolkLogo.h"

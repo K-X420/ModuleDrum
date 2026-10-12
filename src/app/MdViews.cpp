@@ -15,7 +15,7 @@ const MdMachineInfo& mdMachine(int id)
     static std::map<int, MdMachineInfo> cache;
     static std::unique_ptr<mnm::md::Firmware> fw;
     static juce::String fwPath;
-    const auto path = mnm::plugin::loadSharedSetting("mdOsPath");   // Monomodule MD's OS file
+    const auto path = mnm::plugin::loadSharedSetting("mdOsPath");   // ModuleDrum's OS file
     if (path != fwPath) {
         fwPath = path;
         cache.clear();
@@ -256,7 +256,7 @@ void MdSoundView::paint(juce::Graphics& g)
     y += ui::kLineH;
     ui::labelled(g, x, y, ui::kLineH, "LFO", s.lfoOnSelf() ? juce::String("on its own track") : "on track " + juce::String(int(s.lfo[0]) + 1));
 
-    // the four pages as Monomodule MD draws them
+    // the four pages as ModuleDrum draws them
     std::array<spec::Param, 8> syn{};
     std::array<uint8_t, 8> synRaw{};
     for (int k = 0; k < 8; ++k) {

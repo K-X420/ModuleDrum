@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs Monomodule MD's headless checks (md-plugintest), one MD_<NAME>_TEST at a time, each in a fresh process.
+"""Runs ModuleDrum's headless checks (md-plugintest), one MD_<NAME>_TEST at a time, each in a fresh process.
 
     python tests/run_md_tests.py --md-os Elektron_SPS1-1UW_OS1.63.syx [--kits MD_presets.syx] [--build build]
 

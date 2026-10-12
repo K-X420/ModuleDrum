@@ -1,4 +1,4 @@
-# Logos for the Monomodule MD families, drawn on the Monomachine's grid: 1-bit art 9 rows tall (as SID, FM+ and VO are,
+# Logos for the ModuleDrum families, drawn on the Monomachine's grid: 1-bit art 9 rows tall (as SID, FM+ and VO are,
 # 9 lit rows; DigiPRO 11) and at most 27 wide, so the machine block draws them at the size Monomodule draws its own (the
 # lit rows filling an 18-row band). GND, RAM and CTR have none: their names are printed, as GND's is on the Monomachine.
 #   TRX  hollow, double-line letters (as the SID logo's)

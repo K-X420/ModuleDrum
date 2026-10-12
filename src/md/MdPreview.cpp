@@ -38,7 +38,7 @@ Spec soundPreview(const mdcatalog::Sound& sound, const Options& opt)
     for (int t = 0; t < kTracks; ++t) { s.kit.trigGroups[t] = 127; s.kit.muteGroups[t] = 127; s.kit.lfos[t][0] = uint8_t(t); s.kit.levels[t] = 100; }
     sound.applyTo(s.kit, 0);
     s.kit.levels[0] = 127;
-    // the master effects as a fresh Monomodule MD kit has them
+    // the master effects as a fresh ModuleDrum kit has them
     const uint8_t rev[8] = {0, 0, 64, 64, 0, 127, 127, 127}, del[8] = {24, 0, 0, 32, 0, 127, 0, 127}, dyn[8] = {0, 64, 127, 0, 0, 0, 64, 0};
     std::memcpy(s.kit.reverb, rev, 8); std::memcpy(s.kit.delay, del, 8); std::memset(s.kit.eq, 64, 8); std::memcpy(s.kit.dynamics, dyn, 8);
     Event e;

@@ -173,7 +173,7 @@ juce::Result LibraryModel::saveMdPatterns(const juce::String& projectId, const m
     if (projectId.isEmpty()) {   // a new project of the bank as it is
         const auto bytes = mnm::mddump::encodeDump(bank);
         ProjectInfo out;
-        auto r = m_store.importSysexData(bytes.data(), bytes.size(), name, "Monomodule MD", ImportMode::NewProject, {}, &out);
+        auto r = m_store.importSysexData(bytes.data(), bytes.size(), name, "ModuleDrum", ImportMode::NewProject, {}, &out);
         if (r.wasOk() && projectIdOut) *projectIdOut = out.id;
         refresh(true);
         return r;

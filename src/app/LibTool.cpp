@@ -461,8 +461,8 @@ int main(int argc, char** argv)
             check(pd.kits.size() == 1 && pd.patterns.size() == 1 && pd.numDamaged == 0, "the partial export holds one kit and one pattern");
             ProjectInfo again;
             check(store.importSysexFile(src, ImportMode::NewVersion, pj.id, &again).wasOk() && again.current()->changes.joinIntoString(" ").contains("Identical"), "a re-import is a new version, identical");
-            SavedMdItem sound; sound.name = "MY KICK"; sound.savedFrom = "Monomodule MD"; sound.sound = mnm::mdcatalog::Sound::fromKit(v1.kits[0], 0);
-            SavedMdItem kit; kit.name = "MY KIT"; kit.savedFrom = "Monomodule MD"; kit.isKit = true; kit.kit = v1.kits[1];
+            SavedMdItem sound; sound.name = "MY KICK"; sound.savedFrom = "ModuleDrum"; sound.sound = mnm::mdcatalog::Sound::fromKit(v1.kits[0], 0);
+            SavedMdItem kit; kit.name = "MY KIT"; kit.savedFrom = "ModuleDrum"; kit.isKit = true; kit.kit = v1.kits[1];
             check(store.saveMdItem(sound).wasOk() && store.saveMdItem(kit).wasOk(), "save MD items");
             const auto items = store.listSavedMdItems();
             int sounds = 0, kitsSaved = 0;

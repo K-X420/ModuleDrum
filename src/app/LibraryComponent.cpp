@@ -218,7 +218,7 @@ LibraryComponent::LibraryComponent(std::unique_ptr<Store> store, bool audio) : m
         m_player = std::make_unique<mnm::library::PreviewPlayer>();
         m_osPath = mnm::plugin::loadSharedOsPath();
         m_player->setFirmwarePath(m_osPath);
-        m_mdOsPath = mnm::plugin::loadSharedSetting("mdOsPath");   // Monomodule MD's OS file
+        m_mdOsPath = mnm::plugin::loadSharedSetting("mdOsPath");   // ModuleDrum's OS file
         m_player->setMdFirmwarePath(m_mdOsPath);
         auto opt = m_player->options();
         opt.bpm = juce::jlimit(30.0, 300.0, mnm::plugin::loadSharedSetting("previewBpm", "120").getDoubleValue());
@@ -1631,7 +1631,7 @@ void LibraryComponent::selectMdOsFile()
         const auto f = fc.getResult();
         if (!f.existsAsFile()) return;
         m_mdOsPath = f.getFullPathName();
-        mnm::plugin::saveSharedSetting("mdOsPath", m_mdOsPath);   // shared with Monomodule MD
+        mnm::plugin::saveSharedSetting("mdOsPath", m_mdOsPath);   // shared with ModuleDrum
         if (m_player) m_player->setMdFirmwarePath(m_mdOsPath);
         repaint();
     });
@@ -1766,7 +1766,7 @@ void LibraryComponent::startFileDrag(const juce::File& f, juce::Component* sourc
 
 void LibraryComponent::dragPreset(const juce::String& id, juce::Component* source)
 {
-    if (const auto* s = m_mdCatalog.sound(id.toStdString())) {   // a Machinedrum sound: .mdsound for Monomodule MD
+    if (const auto* s = m_mdCatalog.sound(id.toStdString())) {   // a Machinedrum sound: .mdsound for ModuleDrum
         startFileDrag(mnm::library::writeMdSoundDragFile(s->sound, juce::String(s->name) + " " + mdMachineName(s->sound.machine())), source);
         return;
     }
@@ -1941,7 +1941,7 @@ void LibraryComponent::timerCallback()
     if (m_player) {   // the OS file chosen in a plugin
         const auto p = mnm::plugin::loadSharedOsPath();
         if (p != m_osPath && (p.isEmpty() || juce::File(p).existsAsFile())) { m_osPath = p; m_player->setFirmwarePath(p); if (loadLcdArt(p)) { resized(); repaint(); } }
-        const auto mdp = mnm::plugin::loadSharedSetting("mdOsPath");   // the Machinedrum OS file chosen in Monomodule MD
+        const auto mdp = mnm::plugin::loadSharedSetting("mdOsPath");   // the Machinedrum OS file chosen in ModuleDrum
         if (mdp != m_mdOsPath && (mdp.isEmpty() || juce::File(mdp).existsAsFile())) { m_mdOsPath = mdp; m_player->setMdFirmwarePath(mdp); }
     }
 }

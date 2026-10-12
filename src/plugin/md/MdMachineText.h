@@ -1,4 +1,4 @@
-// Monomodule MD: the machine picker's words and logos. Each family has a logo, shown in the machine
+// ModuleDrum: the machine picker's words and logos. Each family has a logo, shown in the machine
 // block and the picker's column header, and a blurb; a hovered machine shows its own description there. ASCII caps (the LCD faces have no lowercase), words of at
 // most 8 characters (a column line holds about 8 at the picker's text size). Names follow the Machinedrum manual's
 // machine reference (rev J, OS 1.53: E12-BC "BONGO CONGO", P-I-ML "METALLICA", INP-EA/EB play the input as a drum with

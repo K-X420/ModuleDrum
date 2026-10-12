@@ -1,4 +1,4 @@
-// The Store's Machinedrum projects and saved Monomodule MD items (Store.h). A version's state is state.syx: the dump as
+// The Store's Machinedrum projects and saved ModuleDrum items (Store.h). A version's state is state.syx: the dump as
 // MdDump encodes it, which for an import is the received file byte for byte.
 #include "Store.h"
 #include <cstring>

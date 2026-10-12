@@ -1,4 +1,4 @@
-// Monomodule MD parameters, as the Machinedrum's pages: per track the machine and its eight SYNTHESIS knobs, the eight
+// ModuleDrum parameters, as the Machinedrum's pages: per track the machine and its eight SYNTHESIS knobs, the eight
 // EFFECTS knobs, ROUTING (DIST VOL PAN DEL REV), the kit LEVEL and the output; the four master effects; an output
 // volume. Every knob is raw 0..127 as on the hardware (bipolar ones such as PAN shown -64..63). The machine list is the stock synthesis
 // machines of OS 1.63 (names and knob labels shown come from the user's OS file at run time).

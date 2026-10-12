@@ -1,10 +1,10 @@
 // Monomodule Library: the Machinedrum pages, built from the same pieces as the Monomachine ones (LibraryViews.h):
 //   MdKitView      16 track rows (machine, the sound when it was first seen elsewhere, level, the synthesis values),
 //                  the master effects, the patterns that use the kit and where it came from
-//   MdSoundView    a sound (one track): a summary, its four pages drawn as in Monomodule MD, actions, references
+//   MdSoundView    a sound (one track): a summary, its four pages drawn as in ModuleDrum, actions, references
 //   MdPatternView  a pattern: summary, a trig grid per track (accents, locked steps), its kit and sources
 //   MdSongsView    a project's songs: each song's rows (pattern, repeats, steps, tempo, mutes; LOOP and END rows)
-// Machine names come from mdnames; the synthesis labels from the user's Machinedrum OS file (Monomodule MD's
+// Machine names come from mdnames; the synthesis labels from the user's Machinedrum OS file (ModuleDrum's
 // "mdOsPath" shared setting), or SYN1-8 without one.
 #pragma once
 #include "LibraryViews.h"

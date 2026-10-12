@@ -272,7 +272,7 @@
 
 #endif /* M68K_COMPILE_FOR_MAME */
 
-/* Monomodule MD: the ColdFire control-handler runner stops the core when the handler returns (src/md/MdControl.cpp) */
+/* ModuleDrum: the ColdFire control-handler runner stops the core when the handler returns (src/md/MdControl.cpp) */
 void md_m68k_instruction_hook(unsigned int pc);
 
 /* ======================================================================== */

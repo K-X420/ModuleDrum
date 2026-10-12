@@ -1,4 +1,4 @@
-﻿// The Machinedrum sound engine, as Monomodule MD and the library previews run it: the OS's control CPU (knob
+﻿// The Machinedrum sound engine, as ModuleDrum and the library previews run it: the OS's control CPU (knob
 // slewing, LFOs, the machines' control handlers, the master effects' conversion), DSP2 (the 16 voices) and DSP1 (track
 // effects, routing, mixer, master effects), one 32-frame pass at a time at 44.1 kHz. JUCE-free.
 // Each pass: the targets set since the last pass go to the OS tick (which slews towards them), then whatever changed

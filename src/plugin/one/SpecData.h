@@ -13,7 +13,7 @@ enum class Display : uint8_t { Blank, Numeric, Bipolar, List, Readout };
 // The other families name an icon array of RomArt.h.
 enum class Icons : uint8_t { None, Toggle, FmRatio, EnsPitch, FmDynFrq, SidWave, DproSync, DproWave, VoCons, DdrwWave, LfoPage, LfoWave, LfoDest, Switch,
                             MdWave1, MdWave2, MdLfoParam };
-// Icons a plugin supplies from its own OS file (Monomodule MD: its LFO waves, SHP1 / SHP2 order), null until read
+// Icons a plugin supplies from its own OS file (ModuleDrum: its LFO waves, SHP1 / SHP2 order), null until read
 inline std::array<std::array<const Bitmap*, 16>, 2>& extIcons() { static std::array<std::array<const Bitmap*, 16>, 2> a{}; return a; }
 
 struct Param {

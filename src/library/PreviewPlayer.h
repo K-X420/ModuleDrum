@@ -51,7 +51,7 @@ public:
     // The render named `key` at this tempo: from the cache, or started now (`build` is called synchronously when it
     // is not cached). A request for another key supersedes a render in progress.
     std::shared_ptr<PreviewAudio> request(const juce::String& key, double bpm, const std::function<preview::PreviewSpec()>& build);
-    // Machinedrum previews: their own OS file (Monomodule MD's), the same cache and thread
+    // Machinedrum previews: their own OS file (ModuleDrum's), the same cache and thread
     void setMdFirmwarePath(const juce::String& path);
     bool hasMdFirmwarePath() const;
     std::shared_ptr<PreviewAudio> requestMd(const juce::String& key, double bpm, const std::function<mdpreview::Spec()>& build);

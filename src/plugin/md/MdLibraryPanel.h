@@ -1,4 +1,4 @@
-// Monomodule MD: the library proper, as Monomodule's LIBRARY panel. It unrolls from under the header over the pages
+// ModuleDrum: the library proper, as Monomodule's LIBRARY panel. It unrolls from under the header over the pages
 // (the track keys stay in view: they are the drop targets for sounds and carry the LOCKs); a bar with the tabs (SOUNDS,
 // KITS, PATTERNS), what is typed (type to find) and CLOSE; a filter column; a four-column grid. A click loads and the
 // panel stays open: a sound onto the selected track (drag it onto a track key for another), a kit, a pattern's kit (the

@@ -1,4 +1,4 @@
-# Builds and tests Monomodule on macOS, Linux and Windows. On a version tag (v1.2.3) it also creates a draft
+# Builds and tests ModuleDrum and Monomodule on macOS, Linux and Windows. On a version tag (v1.2.3) it also creates a draft
 # GitHub release with the Linux and Windows zips attached; the macOS and Windows installers are built separately
 # and added to the draft by hand before it is published.
 name: build

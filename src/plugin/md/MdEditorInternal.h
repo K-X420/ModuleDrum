@@ -1,4 +1,4 @@
-// Monomodule MD's editor, the parts its files share: the parameter pages' tables, the knob tooltips, small helpers
+// ModuleDrum's editor, the parts its files share: the parameter pages' tables, the knob tooltips, small helpers
 #pragma once
 #include "MdEditor.h"
 #include "MdMachineText.h"

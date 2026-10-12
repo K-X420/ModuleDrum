@@ -13,7 +13,7 @@ void MdEditor::saveBankToLibrary()
     const juce::String name = fresh ? "MD PATTERNS " + juce::Time::getCurrentTime().formatted("%Y-%m-%d %H%M") : m_proc.bankName();
     juce::String id;
     juce::StringArray changes;
-    const auto r = m_lib->model().saveMdPatterns(m_proc.bankProjectId(), bank, name, "Monomodule MD", &id, &changes);
+    const auto r = m_lib->model().saveMdPatterns(m_proc.bankProjectId(), bank, name, "ModuleDrum", &id, &changes);
     if (r.failed()) { juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Save Patterns", r.getErrorMessage()); return; }
     if (fresh) {
         m_proc.setBankProject(id, name);
@@ -35,7 +35,7 @@ void MdEditor::dragOutClip(bool trackOnly)
     if (!pat) { flash("EMPTY"); return; }
     const auto kit = m_proc.captureMdKit();
     const auto mf = trackOnly ? mnm::library::buildMdTrackMidiFile(&kit, *pat, m_track) : mnm::library::buildMdPatternMidiFile(&kit, *pat);
-    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Monomodule MD clips");
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("ModuleDrum clips");
     dir.createDirectory();
     juce::String name = kPatternNames[juce::jlimit(0, 127, slot)];
     if (trackOnly) {
@@ -183,13 +183,13 @@ void MdEditor::filesDropped(const juce::StringArray& files, int x, int y)
         if (!mnm::library::readMdTransferFile(f, p)) { errors.add(f.getFileName() + " is not a Machinedrum sound or kit file."); continue; }
         if (p.isKit) {
             const int emptied = m_proc.loadMdKit(juce::String(mnm::mdcatalog::Catalog::kitHash(p.kit)), p.kit, p.name.isNotEmpty() ? p.name.toUpperCase() : juce::String(p.kit.name));
-            if (emptied > 0) errors.add(juce::String(emptied) + " track(s) of " + f.getFileName() + " use machines Monomodule MD does not have; they were left empty.");
+            if (emptied > 0) errors.add(juce::String(emptied) + " track(s) of " + f.getFileName() + " use machines ModuleDrum does not have; they were left empty.");
             selectTrack(m_track);
         } else {
             const int over = m_keys.trackAt(m_keys.getLocalPoint(this, juce::Point<int>(x, y)));
             const int t = over >= 0 ? over : m_track;
             if (!m_proc.loadSound(t, juce::String(mnm::mdcatalog::Catalog::soundHash(p.sound)), p.sound, p.name.toUpperCase()))
-                errors.add(f.getFileName() + " uses a machine Monomodule MD does not have.");
+                errors.add(f.getFileName() + " uses a machine ModuleDrum does not have.");
             if (t != m_track) selectTrack(t); else bindTrackPages();
         }
     }
@@ -217,7 +217,7 @@ void MdEditor::filesDropped(const juce::StringArray& files, int x, int y)
             if (err.isNotEmpty()) errors.add(f.getFileName() + ": " + err);
         }
     }
-    if (!errors.isEmpty()) juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Monomodule MD", errors.joinIntoString("\n"));
+    if (!errors.isEmpty()) juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "ModuleDrum", errors.joinIntoString("\n"));
     timerCallback();
 }
 
@@ -252,7 +252,7 @@ void MdEditor::loadKit(const KitEntry& e)
         if (const auto* dump = m_lib->model().mdState(e.sourceId)) m_proc.setPatternBank(e.sourceId, e.source, *dump, e.position);
     if (emptied > 0)
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load Kit",
-            juce::String(emptied) + " track(s) use machines Monomodule MD does not have; they were left empty.");
+            juce::String(emptied) + " track(s) use machines ModuleDrum does not have; they were left empty.");
     selectTrack(m_track);
     timerCallback();
 }
@@ -290,7 +290,7 @@ void MdEditor::loadSound(const SoundEntry& e)
     mnm::mdcatalog::Sound s;
     if (!m_lib->loadSound(e.key, s)) return;
     if (!m_proc.loadSound(m_track, e.key, s, e.name))
-        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load Sound", "This sound uses a machine Monomodule MD does not have yet.");
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load Sound", "This sound uses a machine ModuleDrum does not have yet.");
     bindTrackPages();
     timerCallback();
 }
@@ -360,7 +360,7 @@ void MdEditor::loadSoundKey(int track, const juce::String& key)
     const auto* item = m_lib->model().mdCatalog().sound(key.toStdString());
     const auto name = item ? juce::String(item->name).toUpperCase() : juce::String();
     if (!m_proc.loadSound(track, key, s, name))
-        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load Sound", "This sound uses a machine Monomodule MD does not have yet.");
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load Sound", "This sound uses a machine ModuleDrum does not have yet.");
     bindTrackPages();
     timerCallback();
 }

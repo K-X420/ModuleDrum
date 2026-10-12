@@ -1,4 +1,4 @@
-// Monomodule MD editor, in the Monomodule LCD style: the same knob pages, LEV column, header and skin as the One / Six
+// ModuleDrum editor, in the Monomodule LCD style: the same knob pages, LEV column, header and skin as the One / Six
 // editors (one/LcdWidgets.h), drawn from the LCD fonts of the user's Monomachine OS file when there is one.
 //   header      logo, the machine block (family + machine; click = the machine picker), KIT, MENU
 //   LEV column  the selected track's kit level, with its activity meter

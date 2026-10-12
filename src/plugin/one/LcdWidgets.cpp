@@ -433,7 +433,7 @@ void LcdToggle::paintButton(juce::Graphics& g, bool highlighted, bool)
 }
 
 // ---------------------------------------------------------------------------
-// BpmReadout (Monomodule and Monomodule MD headers)
+// BpmReadout (Monomodule and ModuleDrum headers)
 
 BpmReadout::BpmReadout()
 {

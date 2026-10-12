@@ -1,22 +1,27 @@
-# Monomodule
+# ModuleDrum
 
-**Monomodule** is a free, open-source, chip-level emulation of the Elektron Monomachine (SFX-6 / SFX-60)
-as plugins for your DAW. Monomodule doesn't approximate the synth with new DSP code. It runs the
-Monomachine's own sound engine inside an emulated Motorola DSP56300, so it matches the hardware sample for sample.
+**ModuleDrum** is a free, open-source, chip-level emulation of the Elektron Machinedrum (SPS-1 UW) as a plugin for
+your DAW. It doesn't approximate the drum machine with new DSP code: it runs the Machinedrum's own operating system
+and DSP programs inside emulated processors, so the sound is the hardware's. Around that it has the Machinedrum's
+sequencer (patterns, parameter locks, songs), a library for kits and patterns, and a set of optional extras the
+hardware never had.
 
-> **Monomodule is not affiliated with, endorsed by or sponsored by Elektron.** "Elektron" and "Monomachine" are
-> trademarks of Elektron Music Machines MAQ AB, used here only to describe what Monomodule emulates. Monomodule
-> contains no Elektron software. To make sound it needs the Monomachine OS file, which you download from Elektron
-> yourself (see [Getting the OS file](#getting-the-os-file)).
+ModuleDrum is a **fork of [Monomodule](https://github.com/shnolk/monomodule)** by Shnolk, which does the same for the
+Elektron Monomachine. ModuleDrum is built on Monomodule's engine approach, its LCD interface and its library, and this
+repository still builds the Monomodule plugins alongside it, with a few additions
+(see [What's included](#whats-included)). Up to version 1.3.0 ModuleDrum was called "Monomodule MD".
+
+> **ModuleDrum and Monomodule are not affiliated with, endorsed by or sponsored by Elektron.** "Elektron",
+> "Machinedrum" and "Monomachine" are trademarks of Elektron Music Machines MAQ AB, used here only to describe what
+> the plugins emulate. They contain no Elektron software. To make sound each needs its machine's OS file, which you
+> download from Elektron yourself (see [Getting the OS files](#getting-the-os-files)).
 
 ## Screenshots
 
 The colours are the plugins' own: **MENU > SKIN** has DEFAULT, INVERTED, LOW CONTRAST and CUSTOM (any ink and paper
 colour). Each shot below uses a different one.
 
-Monomodule MD:
-
-![Monomodule MD: a track's SYNTHESIS, EFFECTS, ROUTING and LFO pages over the 16 track keys](docs/screenshots/md.png)
+![ModuleDrum: a track's SYNTHESIS, EFFECTS, ROUTING and LFO pages over the 16 track keys](docs/screenshots/md.png)
 
 | | |
 |---|---|
@@ -24,12 +29,12 @@ Monomodule MD:
 | ![GRID with two steps held for parameter locks](docs/screenshots/md-grid.png) GRID: the keys are steps; two held for parameter locks, the track 12 steps long | ![The lock lane](docs/screenshots/md-lane.png) The lock lane: one parameter's locks across the page |
 | ![Trig conditions](docs/screenshots/md-conditions.png) Trig conditions (with XTRA on) | |
 
-**Listen:** [a footwork beat from Monomodule MD](docs/audio/md-footwork-demo.wav) (160 BPM, 36 seconds). Six patterns
+**Listen:** [a footwork beat from ModuleDrum](docs/audio/md-footwork-demo.wav) (160 BPM, 36 seconds). Six patterns
 chained one after the other: an intro, the beat, the bass coming in, a two-bar break, then two heavier ones. The default
 kit's machines with parameter locks, retrig rolls and a 12-step tom loop against the 16. It is written in code and
 rendered by the plugin: `src/plugin/md/test/MdDemo.cpp`.
 
-Monomodule One and Six:
+The Monomodule plugins, from the same repository:
 
 | | |
 |---|---|
@@ -39,33 +44,55 @@ Monomodule One and Six:
 
 | | Type | What it does |
 |---|---|---|
+| **ModuleDrum** | Instrument (AU, VST3, standalone) | The Elektron Machinedrum (SPS-1 UW), run on its own OS and DSP code. All 16 tracks with every machine family (TRX, EFM, E12, P-I, GND, INP, RAM and ROM, plus the MID and CTR control machines), the master effects (delay, Gate Box reverb, EQ, dynamix), the sequencer with parameter locks, slides, chains and songs, optional separate outputs per track (16 stereo outputs), drag-and-drop samples onto ROM slots, MIDI clips in and out, and the Library panel for Machinedrum kits, patterns and songs. By KX. |
+
+From Monomodule (Shnolk's work, built here as well):
+
+| | Type | What it does |
+|---|---|---|
 | **Monomodule One** | Instrument (AU, VST3, standalone) | One Monomachine track. Plays all 22 machines: GND, SWAVE, SID, DPRO, FM+, VO-6 and the FX machines. The editor recreates the hardware's LCD pages, with the SYN, AMP, FILT and EFX pages plus three LFOs. FX machines process the side-chain input. |
-| **Monomodule Six** | Instrument (AU, VST3, standalone) | All six tracks in one instance. MIDI channels 1-6 play tracks 1-6. It has six stereo outputs, and each track has its own routing: OUT BUS AB/CD/EF, and for FX machines an input of NEIBOR, INP A/B/AB or BUS AB/CD/EF. **POLY** mode plays chords on one MIDI channel by spreading notes over the tracks, and a menu item copies one track's sound to all six. |
-| **Monomodule MD** | Instrument (AU, VST3, standalone) | The Elektron Machinedrum (SPS-1 UW), run on its own OS and DSP code. All 16 tracks with every machine family (TRX, EFM, E12, P-I, GND, INP, RAM and ROM, plus the MID and CTR control machines), the master effects (delay, Gate Box reverb, EQ, dynamix), optional separate outputs per track (16 stereo outputs), drag-and-drop samples onto ROM slots, and the Library panel for Machinedrum kits, patterns and songs. Machinedrum version by KX. |
+| **Monomodule Six** | Instrument (AU, VST3, standalone) | All six tracks in one instance. MIDI channels 1-6 play tracks 1-6. It has six stereo outputs, and each track has its own routing: OUT BUS AB/CD/EF, and for FX machines an input of NEIBOR, INP A/B/AB or BUS AB/CD/EF. |
 | **Monomodule FX** | Effect (AU, VST3) | The FX machines as an audio effect: THRU, REVERB, CHORUS, DYNAMIX, RINGMOD, PHASER and FLANGER. |
-| **Monomodule Library** | Standalone app | A library for Monomachine sysex dumps. It imports `.syx` files without losing any data, keeps a version history for each Monomachine you own, and lets you browse presets, kits and patterns with audio previews. You can drag items into the plugins or your DAW. |
+| **Monomodule Library** | Standalone app | A library for Monomachine and Machinedrum sysex dumps. It imports `.syx` files without losing any data, keeps a version history for each machine you own, and lets you browse presets, kits and patterns with audio previews. You can drag items into the plugins or your DAW. |
+
+What this fork adds to the Monomodule plugins:
+
+- **POLY** on Monomodule Six: chords on one MIDI channel, the notes spread over the six tracks.
+- **COPY Tn TO ALL** on Six: one track's sound onto all six.
+- **Up / Down** arrow keys step through presets and kits.
+- Tooltips, and list knobs that step one value per wheel tick.
+- Machinedrum projects, kits, sounds and patterns in the Library app.
+
+For anything else about the Monomachine plugins, [Monomodule's own repository](https://github.com/shnolk/monomodule)
+is the source.
 
 Every parameter is a raw 0-127 value, just like on the hardware, so a track's settings are the same as a kit track
 in a sysex dump. The plugins and the Library app share presets, kits and patterns.
 
-## Getting the OS file
+## Getting the OS files
 
-Monomodule needs **Monomachine OS 1.32B**, which Elektron provides as a free download:
+**ModuleDrum** needs the **Machinedrum UW OS 1.63**, which Elektron provides as a free download:
 
-1. Download [Elektron_SFX6-60_OS1.32B.zip](https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SFX6-60_OS1.32B.zip)
+1. Download [Elektron_SPS1-1UW_OS1.63.zip](https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SPS1-1UW_OS1.63.zip)
    from Elektron's website.
-2. Unzip it. Inside is `Elektron_SFX6-60_OS1.32B.syx`.
-3. Open any Monomodule plugin (or the Library app), click **Select OS File...** and choose that `.syx` file.
+2. Unzip it. Inside is `Elektron_SPS1-1UW_OS1.63.syx`.
+3. Open ModuleDrum, click **Select OS File...** and choose that `.syx` file.
 
-You only have to do this once. All Monomodule plugins and the Library app share the setting. The file stays where
-you put it: Monomodule reads it each time it starts and never copies it or redistributes it.
+You only have to do this once. The file stays where you put it: ModuleDrum reads it each time it starts and never
+copies it or redistributes it.
 
-### Machinedrum OS (Monomodule MD)
+**The Monomodule plugins** need **Monomachine OS 1.32B** in the same way:
+[Elektron_SFX6-60_OS1.32B.zip](https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SFX6-60_OS1.32B.zip), which
+holds `Elektron_SFX6-60_OS1.32B.syx`. All of them and the Library app share the setting. With that file present
+ModuleDrum also draws its LCD with the Monomachine's fonts and dials; without it, with a built-in stand-in font.
 
-Monomodule MD needs the **Machinedrum UW OS 1.63** (`Elektron_SPS1-1UW_OS1.63.syx`), also a free download from
-Elektron: [Elektron_SPS1-1UW_OS1.63.zip](https://www.elektron.se/wp-content/uploads/2024/09/Elektron_SPS1-1UW_OS1.63.zip). The first time you open Monomodule MD it asks for it the same way.
+### Coming from "Monomodule MD"
 
-## Using Monomodule MD
+ModuleDrum is the same plugin to a DAW as Monomodule MD was (the same plugin ID), so sets saved with it should open with
+ModuleDrum. Remove the old one, or the host sees two plugins with one ID: delete `Monomodule MD.vst3` (and on macOS
+`Monomodule MD.component` and `Monomodule MD.app`) from your plugin folders. The macOS installer does this for you.
+
+## Using ModuleDrum
 
 **Sounds.** Pick a machine with the logo block (top left); the four pages are the track's SYNTHESIS, EFFECTS, ROUTING
 and LFO. The 16 keys at the bottom select tracks (L = keep the sound when a kit loads, M = mute). MIDI notes on the base
@@ -124,13 +151,13 @@ patterns along.
 
 ## Installing on macOS
 
-Download the latest release from **[Releases](https://github.com/K-X420/monomodule/releases)**. The macOS zip
-(`Monomodule-<version>-macos-universal.zip`) runs on Apple Silicon and Intel Macs, macOS 12 or later.
+Download the latest release from **[Releases](https://github.com/K-X420/ModuleDrum/releases)**. The macOS zip
+(`ModuleDrum-<version>-macos-universal.zip`; `Monomodule-...` up to 1.3.0) runs on Apple Silicon and Intel Macs, macOS 12 or later.
 
 1. Unzip it.
-2. Double-click **Install Monomodule.command**. If macOS says it can't be opened because it is from an
+2. Double-click **Install ModuleDrum.command** (**Install Monomodule.command** up to 1.3.0). If macOS says it can't be opened because it is from an
    unidentified developer, open **System Settings > Privacy & Security**, scroll down and click **Open Anyway**
-   (or right-click the file and choose **Open**). Or run it from Terminal: `bash ~/Downloads/Monomodule-*/Install\ Monomodule.command`.
+   (or right-click the file and choose **Open**). Or run it from Terminal: `bash ~/Downloads/ModuleDrum-*/Install\ ModuleDrum.command`.
 3. It copies the VST3 and AU plugins to `~/Library/Audio/Plug-Ins/`, and the standalone apps and the Library app
    to `~/Applications`. These builds aren't notarised by Apple, so the script also clears the download quarantine
    flag and signs each bundle locally. Without that, hosts refuse to load them.
@@ -139,7 +166,7 @@ Download the latest release from **[Releases](https://github.com/K-X420/monomodu
 
 ## Installing a release
 
-Pre-built downloads for macOS, Windows and Linux are on the **[Releases](https://github.com/K-X420/monomodule/releases)** page.
+Pre-built downloads for macOS, Windows and Linux are on the **[Releases](https://github.com/K-X420/ModuleDrum/releases)** page.
 
 | Platform | Plugins | Library app |
 |---|---|---|
@@ -225,7 +252,7 @@ ctest --test-dir build --output-on-failure
 The tests that run the emulated DSP need the OS file. You can pass it through `MNM_OS_SYX` as above, or through the
 `MNM_OS` environment variable. Without it, those tests are reported as skipped and the rest still run.
 
-Monomodule MD has its own headless checks (sequencer, GRID edits, MIDI, the MID / CTR machines, samples and
+ModuleDrum has its own headless checks (sequencer, GRID edits, MIDI, the MID / CTR machines, samples and
 more). Build the `MnmMdTest` target, then run them all with the MD OS file. `--kits` takes any MD kit dump and is only
 needed for the kit / sound selector check:
 
@@ -260,6 +287,16 @@ They write to a temporary library folder, never your own.
 
 ## Known limitations
 
+ModuleDrum:
+
+- MIDI transfer to and from a real Machinedrum (sysex send / receive, clock out) isn't implemented yet. To move
+  dumps, use `.syx` files with Elektron's C6 or Transfer tools.
+- The extras (trig conditions, micro-timing, retrigs, a track's own length) are the plugin's own: a real Machinedrum
+  has no room for them, so `.syx` exports leave them out.
+- It has not yet been compared side by side with the hardware.
+
+The Monomodule plugins:
+
 - DPRO-DDRW and DPRO-DENS read the Digibank waveforms, which live in the Monomachine's +Drive memory and are not
   part of the OS file. Monomodule builds a stand-in bank instead: the 32 DPRO-WAVE waveforms plus 32 classic
   single-cycle shapes.
@@ -271,7 +308,7 @@ They write to a temporary library folder, never your own.
 
 ## Settings and data
 
-Monomodule stores its settings and its library in the user application-data folder:
+ModuleDrum and Monomodule keep their settings and their shared library in the user application-data folder:
 
 - macOS: `~/Library/Application Support/Shnolk/Monomachine/`
 - Windows: `%APPDATA%\Shnolk\Monomachine\`
@@ -279,23 +316,24 @@ Monomodule stores its settings and its library in the user application-data fold
 
 ## Licence
 
-Monomodule is free software: you can redistribute it and/or modify it under the terms of the
-**GNU Affero General Public License v3.0** (see [LICENSE](LICENSE)). Anyone who distributes Monomodule, modified or
+ModuleDrum, like Monomodule, is free software: you can redistribute it and/or modify it under the terms of the
+**GNU Affero General Public License v3.0** (see [LICENSE](LICENSE)). Anyone who distributes it, modified or
 not, must pass on these same rights and make the corresponding source code available.
 
 It is built on [JUCE](https://github.com/juce-framework/JUCE) (AGPLv3) and
 [dsp56300](https://github.com/dsp56300/dsp56300) (GPLv3), among others.
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists every dependency, its licence and the changes Monomodule makes to
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists every dependency, its licence and the changes made to
 dsp56300.
 
 ## Credits
 
-Monomodule is made by **Shnolk**. Contact: [@shnolk](https://www.instagram.com/shnolk) on Instagram, or
-[shnolk@halftone.world](mailto:shnolk@halftone.world).
+**ModuleDrum** (the Machinedrum plugin, its library support and the additions listed above) is by **KX**.
 
-Monomodule MD (the Machinedrum version) and the Six's POLY mode are by **KX**.
+**[Monomodule](https://github.com/shnolk/monomodule)**, which ModuleDrum is forked from and built on (the
+Monomachine plugins, the LCD interface, the Library app, the emulation approach), is made by **Shnolk**. Contact:
+[@shnolk](https://www.instagram.com/shnolk) on Instagram, or [shnolk@halftone.world](mailto:shnolk@halftone.world).
 
-Monomodule stands on the work of:
+Both stand on the work of:
 
 - [dsp56300](https://github.com/dsp56300/dsp56300), the DSP56300 emulator at the heart of the sound engine
 - [JUCE](https://github.com/juce-framework/JUCE), the plugin and UI framework

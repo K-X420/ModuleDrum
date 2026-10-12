@@ -1,4 +1,4 @@
-// Monomodule MD: the Machinedrum's sound engine from the user's MD OS file.
+// ModuleDrum: the Machinedrum's sound engine from the user's MD OS file.
 //   DSP2 renders the 16 voices (md/MdVoiceEngine), DSP1 runs the track effects, routing, mixer and master effects
 //   (md/MdMixEngine); the OS's own ColdFire code converts the synthesis knobs and the master effects (md/MdControl),
 //   and its routing law converts level, volume, pan and the sends. Knobs are slewed as raw words, as the OS does.
@@ -44,7 +44,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return "Monomodule MD"; }
+    const juce::String getName() const override { return "ModuleDrum"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }   // the MID machines
     bool isMidiEffect() const override { return false; }
@@ -57,7 +57,7 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // OS file (message thread). The path is shared by every Monomodule MD instance.
+    // OS file (message thread). The path is shared by every ModuleDrum instance.
     juce::String firmwarePath() const { return m_firmwarePath; }
     void setFirmwarePath(const juce::String& path, bool persist = true);
     bool engineReady() const { return m_engineReady.load(); }
@@ -91,7 +91,7 @@ public:
     // INIT KIT: every track, routing, LFO and master effect back to a fresh instance's; the library refs are cleared
     void initKit();
     void syncMachineSideEffects() { handleUpdateNowIfNeeded(); }   // dev tools without a message loop: apply machine changes now
-    void clearFirmware();   // forgets the OS file (here and for every Monomodule MD)
+    void clearFirmware();   // forgets the OS file (here and for every ModuleDrum)
     // Library previews (auditioning a kit or a sound before loading it), mixed into the main output. The renderer and
     // its own emulated Machinedrum exist from the first preview on.
     void previewPlay(const juce::String& key, const std::function<mnm::mdpreview::Spec()>& build);

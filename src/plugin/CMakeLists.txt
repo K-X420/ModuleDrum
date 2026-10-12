@@ -89,10 +89,10 @@ foreach(t MnmOne MnmSix MnmFx)
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 endforeach()
 
-# Monomodule MD: the Machinedrum's synthesis voices from the user's MD OS file (src/md). 16 tracks on the MD's
+# ModuleDrum: the Machinedrum's synthesis voices from the user's MD OS file (src/md). 16 tracks on the MD's
 # trig notes, knobs converted by the OS's own control handlers.
 juce_add_plugin(MnmMd
-  PRODUCT_NAME "Monomodule MD"
+  PRODUCT_NAME "ModuleDrum"
   COMPANY_NAME "Shnolk"
   BUNDLE_ID "world.shnolk.mnm.md"
   PLUGIN_MANUFACTURER_CODE Shnk
@@ -117,12 +117,12 @@ target_compile_definitions(MnmMd PUBLIC
 target_link_libraries(MnmMd PRIVATE mdcore mnmlibrary juce::juce_audio_utils juce::juce_audio_devices
   PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
-# Headless check of Monomodule MD (a development tool, not installed)
+# Headless check of ModuleDrum (a development tool, not installed)
 juce_add_console_app(MnmMdTest PRODUCT_NAME "md-plugintest")
 target_sources(MnmMdTest PRIVATE md/MdPluginTest.cpp md/test/MdTestSeq.cpp md/test/MdTestEdit.cpp md/test/MdTestMidi.cpp md/test/MdTestEngine.cpp md/test/MdTestExtras.cpp md/test/MdTestTools.cpp md/test/MdDemo.cpp ${MNM_MD_PROC_SOURCES} ${MNM_MD_UI_SOURCES})
 target_include_directories(MnmMdTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/md)
 target_compile_definitions(MnmMdTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=0
-  JucePlugin_Name="Monomodule MD" JUCE_STANDALONE_APPLICATION=1 JucePlugin_VersionString="${PROJECT_VERSION}")
+  JucePlugin_Name="ModuleDrum" JUCE_STANDALONE_APPLICATION=1 JucePlugin_VersionString="${PROJECT_VERSION}")
 target_link_libraries(MnmMdTest PRIVATE mdcore mnmlibrary juce::juce_audio_utils juce::juce_recommended_config_flags)
 
 # Offscreen editor renderer for UI review (a development tool, not installed)

@@ -1,4 +1,4 @@
-﻿// md-plugintest <os.syx> <out.wav> [ui.png]: headless check of Monomodule MD. Plays a two-bar beat through the
+﻿// md-plugintest <os.syx> <out.wav> [ui.png]: headless check of ModuleDrum. Plays a two-bar beat through the
 // plugin processor at 48 kHz (resampled from the engine's 44.1 kHz) and writes the stereo result; optionally renders
 // the editor to a PNG.
 #include "one/RomArt.h"

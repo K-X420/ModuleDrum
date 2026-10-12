@@ -1,4 +1,4 @@
-# Collects the built plugins, the Library app and the licence files into dist/Monomodule-<version>-<platform>-<arch>.zip.
+# Collects the built plugins, the Library app and the licence files into dist/ModuleDrum-<version>-<platform>-<arch>.zip.
 #   cmake -DBUILD_DIR=build -DOUT_DIR=dist -DPLATFORM=macos|linux|windows -P cmake/stage_release.cmake
 # The plugins must already be built (Release). Used by .github/workflows/build.yml.
 foreach(v BUILD_DIR OUT_DIR PLATFORM)
@@ -10,7 +10,7 @@ get_filename_component(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 get_filename_component(BUILD_DIR "${BUILD_DIR}" ABSOLUTE)
 get_filename_component(OUT_DIR "${OUT_DIR}" ABSOLUTE)
 
-file(STRINGS "${SRC_DIR}/CMakeLists.txt" _proj REGEX "^project\\(Monomodule VERSION [0-9.]+")
+file(STRINGS "${SRC_DIR}/CMakeLists.txt" _proj REGEX "^project\\(ModuleDrum VERSION [0-9.]+")
 string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" VERSION "${_proj}")
 if(PLATFORM STREQUAL "macos")
   set(ARCH universal)
@@ -23,20 +23,20 @@ else()
     set(ARCH arm64)
   endif()
 endif()
-set(NAME "Monomodule-${VERSION}-${PLATFORM}-${ARCH}")
+set(NAME "ModuleDrum-${VERSION}-${PLATFORM}-${ARCH}")
 set(STAGE "${OUT_DIR}/${NAME}")
 file(REMOVE_RECURSE "${STAGE}")
 file(MAKE_DIRECTORY "${STAGE}/VST3")
 
-set(PLUGINS "One:MnmOne" "Six:MnmSix" "FX:MnmFx" "MD:MnmMd")
+set(PLUGINS "ModuleDrum:MnmMd" "Monomodule One:MnmOne" "Monomodule Six:MnmSix" "Monomodule FX:MnmFx")   # product name : target
 foreach(p ${PLUGINS})
   string(REPLACE ":" ";" p "${p}")
-  list(GET p 0 short)
+  list(GET p 0 product)
   list(GET p 1 target)
   set(art "${BUILD_DIR}/src/plugin/${target}_artefacts/Release")
-  file(COPY "${art}/VST3/Monomodule ${short}.vst3" DESTINATION "${STAGE}/VST3")
+  file(COPY "${art}/VST3/${product}.vst3" DESTINATION "${STAGE}/VST3")
   if(PLATFORM STREQUAL "macos")
-    file(COPY "${art}/AU/Monomodule ${short}.component" DESTINATION "${STAGE}/AU")
+    file(COPY "${art}/AU/${product}.component" DESTINATION "${STAGE}/AU")
   endif()
   if(EXISTS "${art}/Standalone")
     file(GLOB standalone "${art}/Standalone/*")
@@ -49,7 +49,7 @@ file(GLOB app_files "${app}/Monomodule Library*")
 file(COPY ${app_files} DESTINATION "${STAGE}/Library")
 
 if(PLATFORM STREQUAL "macos")   # double-click installer: copies into ~/Library, clears quarantine, ad-hoc signs
-  file(COPY "${SRC_DIR}/packaging/macos/Install Monomodule.command" DESTINATION "${STAGE}"
+  file(COPY "${SRC_DIR}/packaging/macos/Install ModuleDrum.command" DESTINATION "${STAGE}"
        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 endif()
 file(COPY "${SRC_DIR}/LICENSE" "${SRC_DIR}/THIRD_PARTY_NOTICES.md" "${SRC_DIR}/README.md" DESTINATION "${STAGE}")

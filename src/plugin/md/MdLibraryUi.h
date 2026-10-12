@@ -1,4 +1,4 @@
-// Monomodule MD: the shared library in the editor, in the LCD faces of Monomodule's own library strip.
+// ModuleDrum: the shared library in the editor, in the LCD faces of Monomodule's own library strip.
 //   MdKitStrip    the joined strip at the top centre of the header, as on Six: the kit (previous / selector / next /
 //                 save), then the selected track's sound (previous / selector / next / save)
 //   MdLibraryDrop a selector's list. Kits: every kit (or the favourites), grouped by project, IMPORT .SYX. Sounds: this

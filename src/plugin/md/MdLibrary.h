@@ -1,4 +1,4 @@
-// Monomodule MD's view of the shared library (the Monomodule Library's store and catalog, library/LibraryModel.h):
+// ModuleDrum's view of the shared library (the Monomodule Library's store and catalog, library/LibraryModel.h):
 // the Machinedrum kits and sounds of every MD project and those saved from the plugin, shared by every instance and
 // by the Library app. Items are addressed by their catalog id (a content hash), as in Monomodule One / Six.
 // Imported .syx files become MD projects of the library. The plugin-only kit library of earlier builds

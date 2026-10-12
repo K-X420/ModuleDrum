@@ -1,4 +1,4 @@
-// Monomodule MD's processor: the engine, the audio block, the parameters, previews
+// ModuleDrum's processor: the engine, the audio block, the parameters, previews
 #include "MdProcessorInternal.h"
 #include <cmath>
 #include "MdEditor.h"

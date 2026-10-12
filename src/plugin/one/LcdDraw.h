@@ -1,4 +1,4 @@
-// Small LCD drawing helpers shared by the library UIs (Monomodule One / Six, Monomodule MD): frames, arrows, icons,
+// Small LCD drawing helpers shared by the library UIs (Monomodule One / Six, ModuleDrum): frames, arrows, icons,
 // fitted and marked text, and short upper-case text entry.
 #pragma once
 #include "Lcd.h"

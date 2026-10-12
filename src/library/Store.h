@@ -9,7 +9,7 @@
 //   <root>/items/presets/<id>.json, items/kits/<id>.json   sounds saved from the plugins (name, tags, parent, the kit)
 //   <root>/user.json                               favourites and tags, keyed by catalog id
 //   Machinedrum projects (project.json "device": "MD") have the same projects and versions; a version's state is
-//   state.syx (the dump, encoded losslessly by MdDump) instead of dump.json. Sounds and kits saved from Monomodule MD
+//   state.syx (the dump, encoded losslessly by MdDump) instead of dump.json. Sounds and kits saved from ModuleDrum
 //   are items/mdsounds/<id>.json and items/mdkits/<id>.json.
 //
 // A PROJECT is one Monomachine's memory over time. Its VERSIONS are immutable: an import, a saved edit session, an
@@ -58,7 +58,7 @@ struct ProjectInfo {
     bool isMd() const { return device == "MD"; }
 };
 
-// A sound or kit saved from Monomodule MD.
+// A sound or kit saved from ModuleDrum.
 struct SavedMdItem {
     juce::String id, name, parent, savedFrom;
     juce::StringArray tags;

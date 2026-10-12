@@ -4,7 +4,7 @@
 
 namespace mnm::plugin {
 
-// The OS file a plugin needs (Monomachine by default; Monomodule MD passes the Machinedrum's)
+// The OS file a plugin needs (Monomachine by default; ModuleDrum passes the Machinedrum's)
 struct OsRequirement {
     juce::String device = "Monomachine", osFile = "Elektron_SFX6-60_OS1.32B.syx", zipFile = "Elektron_SFX6-60_OS1.32B.zip";
     juce::String url;   // empty: kOsDownloadUrl
