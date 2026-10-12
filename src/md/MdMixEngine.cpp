@@ -1,6 +1,7 @@
 #include "MdMixEngine.h"
 #include <cstdlib>
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 #include "dsp56kEmu/dsp.h"
@@ -90,8 +91,12 @@ bool MixEngine::runToPark(uint64_t maxExec)
 {
     const uint64_t start = m_dsp->getInstructionCounter();
     for (uint64_t n = 0; n < maxExec; ++n) {
-        if (m_entryHist) ++(*m_entryHist)[m_dsp->getPC().toWord()];
-        if (m_stepInterpreted) m_dsp->execInterpreter(); else m_dsp->exec();
+        if (m_entryHist) {   // dev: the instructions run from each host-loop entry (or, stepping, each instruction)
+            const TWord at = m_dsp->getPC().toWord();
+            const uint64_t before = m_dsp->getInstructionCounter();
+            if (m_stepInterpreted) m_dsp->execInterpreter(); else m_dsp->exec();
+            (*m_entryHist)[at] += m_stepInterpreted ? 1 : m_dsp->getInstructionCounter() - before;
+        } else m_dsp->exec();
         if (m_dsp->getJit().hasFailed()) { m_faulted = true; m_fault = "DSP JIT failed: " + m_dsp->getJit().failReason(); return false; }
         if (m_dsp->getPC().toWord() == kParkPc) { m_lastInstr = m_dsp->getInstructionCounter() - start; m_lastExecs = n + 1; return true; }
     }
@@ -155,6 +160,29 @@ void MixEngine::trackOutput(int track, float* left, float* right) const
     }
 }
 
+float MixEngine::trackPeak(int track) const
+{
+    TWord mainBlock = 0x200, otherBlock = 0x3E0, block = 0;
+    for (int k = 0; k <= track; ++k) {
+        const bool main = (m_routing[size_t(k)][0] & 0xFFFFFF) == 6;
+        block = main ? mainBlock : otherBlock;
+        if (main) mainBlock += 0x20; else otherBlock -= 0x20;
+    }
+    const TWord* const x = m_mem->getMemAreaPtr(MemArea_X) + block;
+    int32_t top = 0;   // the sample furthest from zero (the gains scale every sample alike, so it gives the peak)
+    for (TWord i = 0; i < kFrames; ++i) { const int32_t s = int32_t(x[i] << 8) >> 8; if (std::abs(s) > std::abs(top)) top = s; }
+    if (top == 0) return 0.0f;
+    auto frac = [](TWord w) { return double(int32_t(w << 8) >> 8) * (1.0 / 8388608.0); };
+    const auto& w = m_routing[size_t(track)];
+    TWord pan = w[2] & 0xFFFFFF;
+    if (pan & 0x800000) pan = 0;
+    if (pan > 0x7ECCCD) pan = 0x7FFFFF;
+    const TWord n = pan >> 10;
+    const double vol = frac(w[1]) * 8.0, s = double(top) * (1.0 / 8388608.0);
+    const double gl = frac(m_mem->get(MemArea_X, 0x14A000 + n)) * vol, gr = frac(m_mem->get(MemArea_X, 0x148000 + n)) * vol;
+    return std::max(std::abs(float(s * gl)), std::abs(float(s * gr)));
+}
+
 void MixEngine::setTrackFx(int track, const std::array<uint16_t, 9>& raw)
 {
     std::array<uint32_t, 9> w{};
@@ -194,11 +222,15 @@ std::array<uint32_t, 0x40> MixEngine::idleStep(const std::array<uint32_t, 0x40>&
 bool MixEngine::renderBlock(const VoiceEngine::Block& voices, Output& out)
 {
     if (m_faulted) { for (auto& f : out) f.fill(0); return false; }
-    for (int t = 0; t < VoiceEngine::kTracks; ++t)
-        for (int i = 0; i < kFrames; ++i)
-            m_dsp->memWrite(MemArea_Y, kVoiceRing + TWord(t * kFrames + i), TWord(voices[size_t(t)][size_t(i)]) & 0xFFFFFF);
+    {   // the voices' blocks into the ring (plain internal Y words)
+        TWord* ring = m_mem->getMemAreaPtr(MemArea_Y) + kVoiceRing;
+        for (int t = 0; t < VoiceEngine::kTracks; ++t)
+            for (int i = 0; i < kFrames; ++i) *ring++ = TWord(voices[size_t(t)][size_t(i)]) & 0xFFFFFF;
+    }
     // which strips are idle (see setSkipIdleStrips): the track's output place as the DSP will count it out
     TWord mask = 0, would = 0, mainBlock = 0x200, otherBlock = 0x3E0;
+    const TWord* const my = m_mem->getMemAreaPtr(MemArea_Y);   // (internal words, read in place)
+    const TWord* const mx = m_mem->getMemAreaPtr(MemArea_X);
     std::array<TWord, VoiceEngine::kTracks> outPtr{};
     m_skipped = 0;
     for (int t = 0; t < VoiceEngine::kTracks; ++t) {
@@ -210,8 +242,7 @@ bool MixEngine::renderBlock(const VoiceEngine::Block& voices, Output& out)
         for (int i = 0; i < kFrames && zero; ++i) zero = (TWord(voices[size_t(t)][size_t(i)]) & 0xFFFFFF) == 0;
         bool skip = zero && s.idle && s.outPtr == outPtr[size_t(t)];
         const TWord base = kStripState + 0x40 * TWord(t);
-        for (TWord k = 0; skip && k < 0x40; ++k) skip = m_mem->get(MemArea_Y, base + k) == s.state[k];
-        for (TWord k = 0; skip && k < 32; ++k) skip = m_mem->get(MemArea_X, s.outPtr + k) == s.out[k];
+        skip = skip && std::equal(s.state.begin(), s.state.end(), my + base) && std::equal(s.out.begin(), s.out.end(), mx + s.outPtr);
         s.ranZero = zero;
         if (skip && m_skipIdle && !m_verifySkips) {   // left out: its two free-running words go on as the strip would take them
             const auto next = idleStep(s.state);
@@ -222,7 +253,7 @@ bool MixEngine::renderBlock(const VoiceEngine::Block& voices, Output& out)
             continue;
         }
         if (skip) would |= TWord(1) << t;   // (verify: it runs, and has to come out as idleStep says)
-        for (TWord k = 0; k < 0x40; ++k) s.state[k] = m_mem->get(MemArea_Y, base + k);   // it runs: the block as it goes in
+        std::copy(my + base, my + base + 0x40, s.state.begin());   // it runs: the block as it goes in
     }
     m_dsp->memWrite(MemArea_Y, kSkipMask, mask);
     m_dsp->setPC(kBlockStart);
@@ -233,9 +264,11 @@ bool MixEngine::renderBlock(const VoiceEngine::Block& voices, Output& out)
         const TWord base = kStripState + 0x40 * TWord(t);
         const auto expect = idleStep(s.state);
         bool same = s.ranZero && s.outPtr == outPtr[size_t(t)];
-        for (TWord k = 0; k < 0x40; ++k) { const TWord w = m_mem->get(MemArea_Y, base + k); same = same && w == expect[k]; s.state[k] = w; }
+        same = same && std::equal(expect.begin(), expect.end(), my + base);
+        std::copy(my + base, my + base + 0x40, s.state.begin());
         s.outPtr = outPtr[size_t(t)];
-        for (TWord k = 0; k < 32; ++k) { const TWord w = m_mem->get(MemArea_X, s.outPtr + k); same = same && w == s.out[k]; s.out[k] = w; }
+        same = same && std::equal(s.out.begin(), s.out.end(), mx + s.outPtr);
+        std::copy(mx + s.outPtr, mx + s.outPtr + 32, s.out.begin());
         if (((would >> t) & 1) && !same) ++m_skipMismatches;
         s.idle = same;   // zero in, the block as idleStep takes it, the output as it was: the next such block is known
     }

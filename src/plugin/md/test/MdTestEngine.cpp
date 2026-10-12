@@ -75,6 +75,22 @@ int mdBench(TestEnv& env, const char* value)
                 std::printf(" (%d words)\n", n);
             }
         }
+        for (int round = 0; round < 2; ++round) {   // the voices' DSP the same way (below its capture area)
+            std::vector<uint32_t> bx(0x1000), by(0x1000);
+            for (uint32_t a = 0; a < 0x1000; ++a) { bx[a] = e->voices().peek(1, a); by[a] = e->voices().peek(2, a); }
+            e->render();
+            for (int space = 0; space < 2; ++space) {
+                std::printf("BENCH idle voices %c changed:", space ? 'Y' : 'X');
+                int runStart = -1, n = 0;
+                for (uint32_t a = 0; a <= 0x1000; ++a) {
+                    const bool ch = a < 0x1000 && e->voices().peek(space + 1, a) != (space ? by[a] : bx[a]);
+                    if (ch && runStart < 0) runStart = int(a);
+                    if (!ch && runStart >= 0) { std::printf(" %04x-%04x", runStart, a - 1); runStart = -1; }
+                    n += ch;
+                }
+                std::printf(" (%d words)\n", n);
+            }
+        }
     }
     if (std::strncmp(value, "strips", 6) == 0) {   // MD_BENCH=strips[N]: random track effects (seed N), a hit on every track, 8 s of
         // silence; then each track's input (zero / the same every block / moving) and how its strip's state repeats
@@ -100,6 +116,13 @@ int mdBench(TestEnv& env, const char* value)
                 inKind[size_t(t)] = std::max(inKind[size_t(t)], zero ? 0 : vb == first[size_t(t)] ? 1 : 2);
             }
         }
+        for (int t = 0; t < 16; ++t) {   // the voices that are not silent: what they still put out
+            if (inKind[size_t(t)] == 0) continue;
+            const auto& vb = e->voiceBlock()[size_t(t)];
+            std::printf("BENCH voice T%d (machine %d) still puts out:", t + 1, env.proc.machineIdOf(t));
+            for (int i = 0; i < 8; ++i) std::printf(" %d", int(vb[size_t(i)]));
+            std::printf(" ...\n");
+        }
         std::printf("BENCH strips after silence (input / state period):");
         for (int t = 0; t < 16; ++t) {
             int period = 0;
@@ -123,20 +146,31 @@ int mdBench(TestEnv& env, const char* value)
             std::printf("BENCH mixer in silence, skipping %s: %.1f%% of real time\n", on ? "on" : "off", 100.0 * bestMs / (1378 * 32.0 / 44100.0 * 1000.0));
         }
         e->mixer().setSkipIdleStrips(true);
+        for (int on = 1; on >= 0; --on) {   // the voices' time in this silence, with and without
+            e->voices().setSkipIdleVoices(on != 0);
+            for (int i = 0; i < 50; ++i) e->render();
+            const int resting = e->voices().skippedVoices();
+            double bestMs = 1e9;
+            for (int round = 0; round < 5; ++round) {
+                const double t0 = juce::Time::getMillisecondCounterHiRes();
+                for (int i = 0; i < 1378; ++i) e->voices().renderPass(scratch);
+                bestMs = std::min(bestMs, juce::Time::getMillisecondCounterHiRes() - t0);
+            }
+            std::printf("BENCH voices in silence, resting %s (%d of 16): %.1f%% of real time\n", on ? "on" : "off", resting, 100.0 * bestMs / (1378 * 32.0 / 44100.0 * 1000.0));
+        }
+        e->voices().setSkipIdleVoices(true);
     }
     if (std::strcmp(value, "mixer") == 0) {   // MD_BENCH=mixer: the mixer's instructions a pass by where they are (64-word buckets)
         std::map<uint32_t, uint64_t> h;
-        e->mixer().setStepInterpreted(true);
-        for (int i = 0; i < 4; ++i) e->render();   // (settle after the switch)
-        e->mixer().setEntryHistogram(&h);
+        for (int i = 0; i < 4; ++i) e->render();
+        e->mixer().setEntryHistogram(&h);   // (the JIT's count from each host-loop entry)
         for (int i = 0; i < 10; ++i) e->render();
         e->mixer().setEntryHistogram(nullptr);
-        e->mixer().setStepInterpreted(false);
         std::map<uint32_t, uint64_t> bucket;
         uint64_t total = 0;
         for (const auto& kv : h) { bucket[kv.first >> 6] += kv.second; total += kv.second; }
         std::printf("BENCH mixer instructions a pass: %.0f;", double(total) / 10.0);
-        for (const auto& kv : bucket) if (kv.second * 200 >= total) std::printf(" %04x-:%.0f", kv.first << 6, double(kv.second) / 10.0);
+        for (const auto& kv : bucket) if (kv.second * 400 >= total) std::printf(" %04x-:%.0f", kv.first << 6, double(kv.second) / 10.0);
         std::printf("\n");
     }
     { const int* c = e->cpu().tickCycles(); std::printf("BENCH control tick cycles: LFO update %d, slew %d, LFOs %d, levels %d\n", c[0], c[1], c[2], c[3]); }
@@ -235,20 +269,22 @@ int mdStripTest(TestEnv& env, const char* value)
         p->prepareToPlay(44100.0, block);
     }
     if (!ps[0]->engineForTests() || !ps[1]->engineForTests()) { std::printf("STRIP TEST FAILED (no engine)\n"); return 1; }
+    ps[1]->engineForTests()->voices().setVerifySkips(true);
     ps[1]->engineForTests()->mixer().setVerifySkips(true);   // the reference: every strip runs, and each that would be left out is checked
     auto set = [&](const juce::String& id, int v) { for (auto& p : ps) if (auto* q = p->apvts.getParameter(id)) q->setValueNotifyingHost(q->convertTo0to1(float(v))); };
     juce::Random r(11);
     const int channels = juce::jmax(ps[0]->getTotalNumOutputChannels(), ps[0]->getTotalNumInputChannels());
     juce::AudioBuffer<float> a(channels, block), b(channels, block);
     const int blocks = int(44100.0 * 24.0 / block);
-    int64_t differ = 0, skipped = 0, strips = 0;
+    int64_t differ = 0, skipped = 0, strips = 0, rested = 0;
     int firstBad = -1;
     bool busy = true;
     for (int i = 0; i < blocks; ++i) {
         if (i % 700 == 0) busy = (i / 700) % 3 != 2;   // two parts playing, one part silence (the strips run down)
         if (i % 23 == 0) {
             const int t = r.nextInt(16);
-            switch (r.nextInt(9)) {
+            switch (r.nextInt(10)) {
+                case 8: set(machineId(t), r.nextInt(kNumMachines)); break;
                 case 0: set(knobId(t, r.nextInt(8)), r.nextInt(128)); break;
                 case 1: set(fxId(t, r.nextInt(8)), r.nextInt(128)); break;
                 case 2: set(routeId(t), r.nextInt(7)); break;
@@ -268,11 +304,14 @@ int mdStripTest(TestEnv& env, const char* value)
         for (int c = 0; c < channels; ++c)
             if (std::memcmp(a.getReadPointer(c), b.getReadPointer(c), sizeof(float) * size_t(block)) != 0) { ++differ; if (firstBad < 0) firstBad = i; break; }
         skipped += ps[0]->engineForTests()->mixer().skippedStrips();
+        rested += ps[0]->engineForTests()->voices().skippedVoices();
         strips += 16;
     }
     check(differ == 0, juce::String(blocks) + " blocks of " + juce::String(channels) + " channels: " + juce::String(differ) + " differ" + (firstBad >= 0 ? " (the first: block " + juce::String(firstBad) + ")" : juce::String()));
     const int wrong = ps[1]->engineForTests()->mixer().skipMismatches();
     check(wrong == 0, "every strip that would be left out came out as expected (" + juce::String(wrong) + " did not)");
+    const int wrongVoices = ps[1]->engineForTests()->voices().skipMismatches();
+    check(wrongVoices == 0, "every voice that would rest came out as expected (" + juce::String(wrongVoices) + " did not); voices at rest: " + juce::String(100.0 * double(rested) / double(strips), 1) + "%");
     check(skipped > strips / 20, "strips left out (a hard case: hits on all 16 tracks most of the time): " + juce::String(100.0 * double(skipped) / double(strips), 1) + "% of the last passes'");
     std::printf(fails ? "STRIP TEST FAILED (%d)\n" : "STRIP TEST OK\n", fails);
     return fails ? 1 : 0;

@@ -19,6 +19,8 @@ constexpr TWord kMemSize = 0x200000;    // UW sample memory runs 0x150000..0x1FF
 constexpr TWord kMainLoop = 0x64;
 constexpr TWord kCopyStub = 0xF00;      // free internal P (the image uses P:0..0x3E1)
 constexpr TWord kParkPc = 0xF40;
+constexpr TWord kSkipBitStub = 0xF20, kSkipStub = 0xF30;   // free internal P: the resting-voice test
+constexpr TWord kSkipMask = 0xFE0, kSkipFlag = 0xFE1;      // free Y: bit t = track t rests this pass; the track in turn's bit
 constexpr TWord kCapture = 0x1000;      // Y: 16 x 32 words of plain RAM below the bridge (the image uses Y up to 0x7FF; tracks 0x800..0xBFF)
 constexpr TWord kSampleBase = 0x150000, kSampleEnd = 0x1FFA00;   // the 48-ROM configuration
 constexpr TWord kSlotTable = 0x147E00;  // 4 words per slot: base, length, loop start (-1 = none), rate
@@ -81,6 +83,36 @@ void VoiceEngine::installPatches()
     m_dsp->memWriteP(0xD3, 0x000000);                 // 'movep #>$8e5a51,x:<<$ffffec' (DMA0 start) -> nop nop
     m_dsp->memWriteP(0xD4, 0x000000);
     m_dsp->memWriteP(0xE2, 0x0C0000 | kParkPc);       // 'movep x:<<$ffffea,a' -> jmp <kParkPc
+    // The resting-voice test, in two places so that it touches no register a voice's code may be handed:
+    //   P:0x6B (a track's turn begins, A and B about to be loaded): the mask's lowest bit into Y:kSkipFlag
+    //   P:0xB4 ('jsr (r1)', the render): that bit set -> on to P:0xD5, past the render and the copy of its output
+    //   (A is put back as it was; the flags a render starts with differ, which no machine's code reads)
+    if (m_mem->get(MemArea_P, 0x6B) != 0x5FF000 || m_mem->get(MemArea_P, 0x6C) != 0x000142 || m_mem->get(MemArea_P, 0xB4) != 0x0BE180)
+        throw std::runtime_error("MD harness: the dispatcher is not where OS 1.63 has it");
+    pc = kSkipBitStub;
+    emit("move y:>$fe0,a");
+    m_dsp->memWriteP(pc++, 0x200023);   // lsr a: this track's bit into the carry
+    emit("move a1,y:>$fe0");
+    m_dsp->memWriteP(pc++, 0x200013);   // clr a (the carry stays)
+    m_dsp->memWriteP(pc++, 0x200037);   // rol a: A1 = the carry
+    emit("move a1,y:>$fe1");
+    emit("move y:>$142,b");             // the instruction the hook took the place of
+    emit("rts");
+    if (pc > kSkipStub) throw std::runtime_error("MD harness: skip stub overflow");
+    pc = kSkipStub;
+    emit("move y:>$fe1,a");
+    m_dsp->memWriteP(pc++, 0x200003);   // tst a
+    m_dsp->memWriteP(pc++, 0x0E20D5);   // jne <$d5: rests
+    emit("move r7,a");                  // A as the dispatcher left it (the output bank's address, P:0xA7)
+    m_dsp->memWriteP(pc++, 0x0BE180);   // jsr (r1)
+    m_dsp->memWriteP(pc++, 0x0C00B5);   // jmp <$b5
+    if (pc > kParkPc) throw std::runtime_error("MD harness: skip stub overflow");
+    m_dsp->memWriteP(0x6B, 0x0BF080);   // jsr >kSkipBitStub
+    m_dsp->memWriteP(0x6C, kSkipBitStub);
+    m_dsp->memWriteP(0xB4, 0x0C0000 | kSkipStub);
+    m_dsp->memWrite(MemArea_Y, kSkipMask, 0);
+    m_dsp->memWrite(MemArea_Y, kSkipFlag, 0);
+    for (auto& r : m_rest) r = Rest();
 }
 
 void VoiceEngine::reset()
@@ -290,13 +322,37 @@ bool VoiceEngine::renderPass(Block& out)
             written[size_t(k)] = w;
         }
     }
+    // which voices rest (see setSkipIdleVoices)
+    TWord mask = 0, would = 0;
+    const TWord* const my = m_mem->getMemAreaPtr(MemArea_Y);   // (internal words, read in place)
+    m_skipped = 0;
+    for (int t = 1; t < kTracks; ++t) {
+        auto& r = m_rest[size_t(t)];
+        bool skip = r.idle && !((m_listening >> t) & 1);
+        const TWord* const block = my + trackBase(t);
+        const TWord* const cap = my + kCapture + TWord(t * kBlockFrames);
+        skip = skip && std::equal(r.state.begin(), r.state.end(), block) && std::equal(r.out.begin(), r.out.end(), cap);
+        if (skip && m_skipIdle && !m_verifySkips) { mask |= TWord(1) << t; ++m_skipped; continue; }
+        if (skip) would |= TWord(1) << t;
+        std::copy(block, block + 0x40, r.state.begin());   // it renders: the block as it goes in
+    }
+    m_dsp->memWrite(MemArea_Y, kSkipMask, mask);
     m_dsp->setPC(kMainLoop);
-    if (!runToPark(kMaxExecPass)) { for (auto& t : out) t.fill(0); return false; }
+    if (!runToPark(kMaxExecPass)) { for (auto& t : out) t.fill(0); for (auto& r : m_rest) r.idle = false; return false; }
+    for (int t = 1; t < kTracks; ++t) {
+        if ((mask >> t) & 1) continue;
+        auto& r = m_rest[size_t(t)];
+        const TWord* const block = my + trackBase(t);
+        const TWord* const cap = my + kCapture + TWord(t * kBlockFrames);
+        const bool same = std::equal(r.state.begin(), r.state.end(), block) && std::equal(r.out.begin(), r.out.end(), cap);
+        std::copy(block, block + 0x40, r.state.begin());
+        std::copy(cap, cap + 32, r.out.begin());
+        if (((would >> t) & 1) && !same) ++m_skipMismatches;
+        r.idle = same;
+    }
+    const TWord* cap = my + kCapture;
     for (int t = 0; t < kTracks; ++t)
-        for (int i = 0; i < kBlockFrames; ++i) {
-            const TWord w = m_mem->get(MemArea_Y, kCapture + TWord(t * kBlockFrames + i)) & 0xFFFFFF;
-            out[size_t(t)][size_t(i)] = int32_t(w << 8) >> 8;
-        }
+        for (int i = 0; i < kBlockFrames; ++i) out[size_t(t)][size_t(i)] = int32_t(*cap++ << 8) >> 8;
     return true;
 }
 

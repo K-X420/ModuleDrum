@@ -60,6 +60,18 @@ public:
     const std::string& faultReason() const { return m_fault; }
     uint64_t lastPassInstructions() const { return m_lastInstr; }
     uint64_t lastPassBlocks() const { return m_lastExecs; }   // dev: the JIT blocks entered from the host loop
+    // Voices at rest are not rendered. A voice's render (the dispatcher's 'jsr (r1)' at P:0xB4) works on its 64-word
+    // state block (Y:0x800 + 0x40 t, the host's packet words among them) and writes its 32 output words. When a
+    // render left the block exactly as it found it and put out the same 32 words as the one before, the next one from
+    // the same block would do the same: it is left out and its output kept (a bit a track in Y:kSkipMask), until a
+    // trig, a packet word or anything else in the block changes. Not for track 1 (the dispatcher's block housekeeping
+    // hangs on it) nor for the tracks the host marks as listening (setListening: the INP and RAM machines, whose sound
+    // also depends on the audio coming in). md-plugintest MD_VOICE_TEST runs both ways side by side.
+    void setSkipIdleVoices(bool on) { m_skipIdle = on; }
+    void setVerifySkips(bool on) { m_verifySkips = on; }   // nothing left out; each voice that would be is checked
+    void setListening(uint32_t mask) { m_listening = mask; }
+    int skippedVoices() const { return m_skipped; }        // in the last pass
+    int skipMismatches() const { return m_skipMismatches; }
     void setEntryHistogram(std::map<uint32_t, uint64_t>* h) { m_entryHist = h; }   // dev: counts each host-loop entry by its PC
     uint32_t peek(int space, uint32_t addr) const;   // debug: 0 = P, 1 = X, 2 = Y
     // A slot's sample as it is in sample memory now (a RAM recorder's recording: slots 32..35), decoded through the
@@ -89,6 +101,15 @@ private:
     bool m_faulted = false;
     std::string m_fault;
     uint64_t m_lastInstr = 0, m_lastExecs = 0;
+    struct Rest {
+        bool idle = false;                   // its last render: the block unchanged, the same output
+        std::array<uint32_t, 0x40> state{};  // the block after its last render
+        std::array<uint32_t, 32> out{};      // its output then
+    };
+    std::array<Rest, kTracks> m_rest{};
+    bool m_skipIdle = true, m_verifySkips = false;
+    uint32_t m_listening = 0;
+    int m_skipped = 0, m_skipMismatches = 0;
     std::map<uint32_t, uint64_t>* m_entryHist = nullptr;
 };
 

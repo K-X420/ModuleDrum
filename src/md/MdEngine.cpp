@@ -121,14 +121,15 @@ void Engine::setDirect(uint32_t mask)
 void Engine::render()
 {
     refresh();
+    uint32_t listening = 0;   // the machines whose sound also depends on the audio coming in (INP, RAM): never left out
+    for (int t = 0; t < kTracks; ++t) {
+        const int id = m_tracks[size_t(t)].target.machine;
+        if ((id >= 80 && id <= 85) || (id >= 160 && id <= 168)) listening |= 1u << t;
+    }
+    m_voices->setListening(listening);
     m_voices->renderPass(m_block);
     m_mixer->renderBlock(m_block, m_out);
-    for (int t = 0; t < kTracks; ++t) {   // the meters
-        float L[kFrames], R[kFrames], pk = 0.0f;
-        m_mixer->trackOutput(t, L, R);
-        for (int i = 0; i < kFrames; ++i) pk = std::max({pk, std::abs(L[i]), std::abs(R[i])});
-        m_trackPeak[size_t(t)] = pk * kMasterGain;
-    }
+    for (int t = 0; t < kTracks; ++t) m_trackPeak[size_t(t)] = m_mixer->trackPeak(t) * kMasterGain;   // the meters
     for (int t = 0; t < kTracks; ++t) {
         if (!((m_direct >> t) & 1)) continue;
         auto& o = m_trackOut[size_t(t)];

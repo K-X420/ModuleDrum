@@ -50,6 +50,7 @@ public:
     // volume x pan law: PAN word (clamped at 0x7ECCCD) >> 10 indexes X:0x14A000 (left) / X:0x148000 (right); x8.
     void setDirect(uint32_t mask);
     void trackOutput(int track, float* left, float* right) const;   // after renderBlock: 32 frames, 1.0 = full scale
+    float trackPeak(int track) const;   // the highest |sample| trackOutput would give (the meters), without making them
     bool renderBlock(const VoiceEngine::Block& voices, Output& out);
     // The finished master block (32 stereo frames, L/R) DSP1 sends back to DSP2 for the RAM recorders (X:0x688)
     void masterReturn(int32_t* lr64) const;
