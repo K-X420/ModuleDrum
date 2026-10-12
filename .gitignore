@@ -6,3 +6,4 @@ out/
 .vscode/
 .idea/
 CMakeUserPresets.json
+!docs/audio/*.wav
