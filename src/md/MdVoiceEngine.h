@@ -11,6 +11,7 @@
 // HI08 transfers do on the hardware).
 #pragma once
 #include <array>
+#include <map>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -58,6 +59,8 @@ public:
     bool faulted() const { return m_faulted; }
     const std::string& faultReason() const { return m_fault; }
     uint64_t lastPassInstructions() const { return m_lastInstr; }
+    uint64_t lastPassBlocks() const { return m_lastExecs; }   // dev: the JIT blocks entered from the host loop
+    void setEntryHistogram(std::map<uint32_t, uint64_t>* h) { m_entryHist = h; }   // dev: counts each host-loop entry by its PC
     uint32_t peek(int space, uint32_t addr) const;   // debug: 0 = P, 1 = X, 2 = Y
     // A slot's sample as it is in sample memory now (a RAM recorder's recording: slots 32..35), decoded through the
     // DSP's table; its rate from the slot record. Empty when the slot holds nothing.
@@ -85,7 +88,8 @@ private:
     std::unique_ptr<dsp56k::DSP> m_dsp;
     bool m_faulted = false;
     std::string m_fault;
-    uint64_t m_lastInstr = 0;
+    uint64_t m_lastInstr = 0, m_lastExecs = 0;
+    std::map<uint32_t, uint64_t>* m_entryHist = nullptr;
 };
 
 } // namespace mnm::md

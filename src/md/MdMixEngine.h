@@ -12,6 +12,7 @@
 //   Y:0x150 delay (9 words), Y:0x170 EQ (10), Y:0x17A dynamics (11), Y:0x185 reverb (8)
 #pragma once
 #include <array>
+#include <map>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -58,6 +59,9 @@ public:
     bool faulted() const { return m_faulted; }
     const std::string& faultReason() const { return m_fault; }
     uint64_t lastBlockInstructions() const { return m_lastInstr; }
+    uint64_t lastBlockExecs() const { return m_lastExecs; }   // dev: the JIT blocks entered from the host loop
+    void setEntryHistogram(std::map<uint32_t, uint64_t>* h) { m_entryHist = h; }   // dev: counts each host-loop entry by its PC
+    void setStepInterpreted(bool on) { m_stepInterpreted = on; }   // dev: an instruction at a time (with the histogram: every PC run)
 
 private:
     bool runToPark(uint64_t maxExec);
@@ -69,7 +73,9 @@ private:
     std::unique_ptr<dsp56k::DSP> m_dsp;
     bool m_faulted = false;
     std::string m_fault;
-    uint64_t m_lastInstr = 0;
+    uint64_t m_lastInstr = 0, m_lastExecs = 0;
+    std::map<uint32_t, uint64_t>* m_entryHist = nullptr;
+    bool m_stepInterpreted = false;
     std::array<std::array<uint32_t, 5>, VoiceEngine::kTracks> m_routing{};
     uint32_t m_direct = 0;
 };

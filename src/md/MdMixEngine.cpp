@@ -1,4 +1,5 @@
 #include "MdMixEngine.h"
+#include <cstdlib>
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
@@ -61,9 +62,10 @@ bool MixEngine::runToPark(uint64_t maxExec)
 {
     const uint64_t start = m_dsp->getInstructionCounter();
     for (uint64_t n = 0; n < maxExec; ++n) {
-        m_dsp->exec();
+        if (m_entryHist) ++(*m_entryHist)[m_dsp->getPC().toWord()];
+        if (m_stepInterpreted) m_dsp->execInterpreter(); else m_dsp->exec();
         if (m_dsp->getJit().hasFailed()) { m_faulted = true; m_fault = "DSP JIT failed: " + m_dsp->getJit().failReason(); return false; }
-        if (m_dsp->getPC().toWord() == kParkPc) { m_lastInstr = m_dsp->getInstructionCounter() - start; return true; }
+        if (m_dsp->getPC().toWord() == kParkPc) { m_lastInstr = m_dsp->getInstructionCounter() - start; m_lastExecs = n + 1; return true; }
     }
     std::ostringstream o; o << "block did not finish (PC=$" << std::hex << m_dsp->getPC().toWord() << ")";
     m_faulted = true; m_fault = o.str();

@@ -126,9 +126,9 @@ bool VoiceEngine::runToPark(uint64_t maxExec)
                 }
             }
             m_dsp->execInterpreter();
-        } else m_dsp->exec();
+        } else { if (m_entryHist) ++(*m_entryHist)[m_dsp->getPC().toWord()]; m_dsp->exec(); }
         if (m_dsp->getJit().hasFailed()) { m_faulted = true; m_fault = "DSP JIT failed: " + m_dsp->getJit().failReason(); return false; }
-        if (m_dsp->getPC().toWord() == kParkPc) { m_lastInstr = m_dsp->getInstructionCounter() - start; return true; }
+        if (m_dsp->getPC().toWord() == kParkPc) { m_lastInstr = m_dsp->getInstructionCounter() - start; m_lastExecs = n + 1; return true; }
     }
     std::ostringstream o; o << "pass did not finish (PC=$" << std::hex << m_dsp->getPC().toWord() << ")";
     m_faulted = true; m_fault = o.str();

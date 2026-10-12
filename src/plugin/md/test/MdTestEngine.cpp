@@ -42,6 +42,55 @@ int mdBench(TestEnv& env, const char* value)
     std::printf("BENCH engine %.1f%% of real time (voices %.1f%%, mixer %.1f%%, control tick %.1f%%); %llu + %llu instr/pass\n",
                 100.0 * best[0] / real, 100.0 * best[1] / real, 100.0 * best[2] / real, 100.0 * best[3] / real,
                 (unsigned long long)e->voices().lastPassInstructions(), (unsigned long long)e->mixer().lastBlockInstructions());
+    std::printf("BENCH host-loop block entries a pass: voices %llu, mixer %llu\n", (unsigned long long)e->voices().lastPassBlocks(), (unsigned long long)e->mixer().lastBlockExecs());
+    if (std::strcmp(value, "entries") == 0) {   // MD_BENCH=entries: where the host loop enters the JIT (100 passes), the busiest first
+        std::map<uint32_t, uint64_t> hv, hm;
+        e->voices().setEntryHistogram(&hv); e->mixer().setEntryHistogram(&hm);
+        for (int i = 0; i < 100; ++i) e->render();
+        e->voices().setEntryHistogram(nullptr); e->mixer().setEntryHistogram(nullptr);
+        for (auto* h : {&hv, &hm}) {
+            std::vector<std::pair<uint64_t, uint32_t>> v;
+            for (const auto& kv : *h) v.push_back({kv.second, kv.first});
+            std::sort(v.rbegin(), v.rend());
+            std::printf("BENCH %s entries (a pass):", h == &hv ? "voices" : "mixer");
+            for (size_t i = 0; i < v.size() && i < 40; ++i) std::printf(" %04x:%.0f", v[i].second, double(v[i].first) / 100.0);
+            std::printf(" (%zu places)\n", v.size());
+        }
+    }
+    if (std::strcmp(value, "idle") == 0) {   // MD_BENCH=idle: after 6 s of silence, the mixer's internal words one more block changes
+        for (int i = 0; i < 8000; ++i) e->render();
+        for (int round = 0; round < 2; ++round) {
+            std::vector<int32_t> bx(0x2000), by(0x2000);
+            for (uint32_t a = 0; a < 0x2000; ++a) { bx[a] = e->mixer().peekX(a); by[a] = e->mixer().peekY(a); }
+            e->render();
+            for (int space = 0; space < 2; ++space) {
+                std::printf("BENCH idle %c changed:", space ? 'Y' : 'X');
+                int runStart = -1, n = 0;
+                for (uint32_t a = 0; a <= 0x2000; ++a) {
+                    const bool ch = a < 0x2000 && (space ? e->mixer().peekY(a) != by[a] : e->mixer().peekX(a) != bx[a]);
+                    if (ch && runStart < 0) runStart = int(a);
+                    if (!ch && runStart >= 0) { std::printf(" %04x-%04x", runStart, a - 1); runStart = -1; }
+                    n += ch;
+                }
+                std::printf(" (%d words)\n", n);
+            }
+        }
+    }
+    if (std::strcmp(value, "mixer") == 0) {   // MD_BENCH=mixer: the mixer's instructions a pass by where they are (64-word buckets)
+        std::map<uint32_t, uint64_t> h;
+        e->mixer().setStepInterpreted(true);
+        for (int i = 0; i < 4; ++i) e->render();   // (settle after the switch)
+        e->mixer().setEntryHistogram(&h);
+        for (int i = 0; i < 10; ++i) e->render();
+        e->mixer().setEntryHistogram(nullptr);
+        e->mixer().setStepInterpreted(false);
+        std::map<uint32_t, uint64_t> bucket;
+        uint64_t total = 0;
+        for (const auto& kv : h) { bucket[kv.first >> 6] += kv.second; total += kv.second; }
+        std::printf("BENCH mixer instructions a pass: %.0f;", double(total) / 10.0);
+        for (const auto& kv : bucket) if (kv.second * 200 >= total) std::printf(" %04x-:%.0f", kv.first << 6, double(kv.second) / 10.0);
+        std::printf("\n");
+    }
     { const int* c = e->cpu().tickCycles(); std::printf("BENCH control tick cycles: LFO update %d, slew %d, LFOs %d, levels %d\n", c[0], c[1], c[2], c[3]); }
     return 0;
 }
