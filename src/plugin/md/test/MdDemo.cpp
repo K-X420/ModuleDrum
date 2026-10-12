@@ -31,8 +31,8 @@ int mdDemo(TestEnv& env, const char* value)
     enum { BD = 0, SD, XT, CP, RS, CB, CH, OH, CY, MA, CL, XC, SUB, ESD, ECP, TA };
     enum { DEC = 1, DIST = 16, VOL = 17, PAN = 18, DEL = 19, REV = 20 };
     auto kit = p.captureMdKit();
-    kit.params[BD][DEC] = 60; kit.params[BD][DIST] = 30; kit.params[BD][VOL] = 104;
-    kit.params[SUB][DEC] = 76; kit.params[SUB][VOL] = 84;
+    kit.params[BD][DEC] = 74; kit.params[BD][DIST] = 30; kit.params[BD][VOL] = 118;
+    kit.params[SUB][DEC] = 94; kit.params[SUB][VOL] = 122;
     kit.params[XT][VOL] = 92; kit.params[XT][PAN] = 44; kit.params[XT][DEC] = 50; kit.params[XT][REV] = 18;
     kit.params[CP][REV] = 46; kit.params[CP][VOL] = 127; kit.levels[CP] = 127;
     kit.params[SD][REV] = 26; kit.params[SD][VOL] = 112; kit.levels[SD] = 120;
@@ -43,7 +43,7 @@ int mdDemo(TestEnv& env, const char* value)
     kit.params[CB][VOL] = 90; kit.params[CB][PAN] = 104; kit.params[CB][DEL] = 40;
     kit.params[CY][VOL] = 84; kit.params[CY][REV] = 40;
     kit.params[TA][VOL] = 100; kit.params[TA][PAN] = 28;
-    for (auto& l : kit.levels) l = uint8_t(l * 58 / 100);   // headroom: the 16 tracks together stay under the outputs' ceiling
+    for (auto& l : kit.levels) l = uint8_t(l * 51 / 100);   // headroom: the 16 tracks together stay under the outputs' ceiling
     kit.delay[0] = 36;    // TIME: a dotted feel against the 16ths
     kit.delay[3] = 54;    // FB
     kit.reverb[2] = 58;   // DEC
