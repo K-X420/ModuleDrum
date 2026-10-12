@@ -30,6 +30,17 @@ static void save(juce::Component& c, const juce::File& out)
     saveImage(c.createComponentSnapshot(c.getLocalBounds(), true, 1.0f), out);
 }
 
+// dev: MNM_SNAPSHOT_COLORS="INK,PAPER" (RRGGBB): the snapshot in those colours (nothing saved)
+static void snapshotColours(mnm::plugin::one::OneEditor& ed)
+{
+    const char* col = std::getenv("MNM_SNAPSHOT_COLORS");
+    if (!col) return;
+    juce::Colour ink, paper;
+    const auto parts = juce::StringArray::fromTokens(col, ",", "");
+    if (parts.size() == 2 && mnm::plugin::skin::parseHex(parts[0], ink) && mnm::plugin::skin::parseHex(parts[1], paper))
+        ed.devSkin(mnm::plugin::skin::presetSkin(mnm::plugin::skin::Preset::Custom, ink, paper));
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI gui;
@@ -59,6 +70,7 @@ int main(int argc, char** argv)
                             p->setValueNotifyingHost(p->convertTo0to1(float(i)));
             led->refresh();
             if (juce::String(argv[1]).endsWith("-picker")) led->showMachinePicker();
+            snapshotColours(*led);
         }
         save(*ed, juce::File(juce::String(argv[2])));
         ed.reset();
@@ -379,7 +391,7 @@ int main(int argc, char** argv)
         if (auto* p = proc.apvts.getParameter(muteId(3))) p->setValueNotifyingHost(1.0f);   // track 4 muted
         proc.syncMachineSideEffects();
         std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
-        if (auto* led = dynamic_cast<OneEditor*>(ed.get())) { led->selectTrack(track); led->refresh(); }
+        if (auto* led = dynamic_cast<OneEditor*>(ed.get())) { led->selectTrack(track); led->refresh(); snapshotColours(*led); }
         save(*ed, juce::File(juce::String(argv[2])));
         ed.reset();
         return 0;

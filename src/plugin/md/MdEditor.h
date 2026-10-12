@@ -204,6 +204,7 @@ public:
     void showAbout() { m_about.setVisible(true); m_about.toFront(false); }                     // dev/snapshot
     // dev/tests: the GRID as clicks drive it
     void devStep(int s) { if (m_keys.onStep) m_keys.onStep(s); }
+    void devSkin(const skin::Skin& s) { skin::apply(s); skinChanged(); m_skinPoll = 1 << 30; }   // dev/snapshot: colours for this window only (nothing saved)
     void devHold(int s) { holdStep(s); }
     void devHoldAdd(int s) { if (m_keys.onHoldAdd) m_keys.onHoldAdd(s); }
     void devHoldRange(int a, int b) { if (m_keys.onHoldRange) m_keys.onHoldRange(a, b); }

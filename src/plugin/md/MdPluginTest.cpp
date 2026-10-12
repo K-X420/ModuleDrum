@@ -413,6 +413,12 @@ int main(int argc, char** argv)
             if (std::getenv("MD_UI_ABOUT")) med->showAbout();
             if (std::getenv("MD_UI_SKIN")) med->showSkinDialog();
             if (const char* tab = std::getenv("MD_UI_PANEL")) med->showLibrary(std::atoi(tab));   // 0 sounds, 1 kits, 2 patterns          // the kit list open under the header
+            if (const char* col = std::getenv("MNM_SNAPSHOT_COLORS")) {   // dev: "INK,PAPER" as RRGGBB: the snapshot in those colours (nothing saved)
+                juce::Colour ink, paper;
+                const auto parts = juce::StringArray::fromTokens(col, ",", "");
+                if (parts.size() == 2 && mnm::plugin::skin::parseHex(parts[0], ink) && mnm::plugin::skin::parseHex(parts[1], paper))
+                    med->devSkin(mnm::plugin::skin::presetSkin(mnm::plugin::skin::Preset::Custom, ink, paper));
+            }
         }
         auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);
         juce::File png{juce::String(argv[3])};

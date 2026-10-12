@@ -94,6 +94,7 @@ public:
     void showPresetMenu(bool kits = false) { openMenu(kits); }
     void showSaveDialog(bool kit = false) { m_saveDialog.open(kit); }
     void selectTrack(int t);   // Six: rebinds every control to track t (0-based)
+    void devSkin(const skin::Skin& s) { applySkin(s, false); m_skinPollCountdown = 1 << 30; }   // dev/snapshot: colours for this window only (nothing saved)
     int selectedTrack() const { return m_track; }
 
 private:
