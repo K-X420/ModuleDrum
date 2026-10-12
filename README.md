@@ -21,9 +21,10 @@ Monomodule MD:
 | ![GRID with two steps held for parameter locks](docs/screenshots/md-grid.png) GRID: the keys are steps; two held for parameter locks, the track 12 steps long | ![The lock lane](docs/screenshots/md-lane.png) The lock lane: one parameter's locks across the page |
 | ![Trig conditions](docs/screenshots/md-conditions.png) Trig conditions (with XTRA on) | |
 
-**Listen:** [a footwork beat from Monomodule MD](docs/audio/md-footwork-demo.wav) (160 BPM, 14 seconds). The default
-kit's machines, a 64-step pattern with parameter locks, retrig rolls, a 12-step tom loop against the 16 and
-conditions that change the second pass. It is written in code and rendered by the plugin: `src/plugin/md/test/MdDemo.cpp`.
+**Listen:** [a footwork beat from Monomodule MD](docs/audio/md-footwork-demo.wav) (160 BPM, 36 seconds). Six patterns
+chained one after the other: an intro, the beat, the bass coming in, a two-bar break, then two heavier ones. The default
+kit's machines with parameter locks, retrig rolls and a 12-step tom loop against the 16. It is written in code and
+rendered by the plugin: `src/plugin/md/test/MdDemo.cpp`.
 
 Monomodule One and Six:
 
