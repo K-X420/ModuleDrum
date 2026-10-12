@@ -45,18 +45,51 @@ void wr8(uint32_t a, uint8_t v)
     if (a >= kSramBase && a < kSramBase + kSramSize) { (*g_ram)[kSramShadow + (a - kSramBase)] = v; return; }
     if (a < kRamSize && a >= mnm::md::kMainOsBase) (*g_ram)[a] = v;   // vectors below the OS stay ours
 }
+
+// The same map for a whole word or long at once (the interpreter's every fetch and access comes through here): where
+// the n bytes at a live, or null when they need the byte-by-byte way above (the tempo, unmapped space, an edge).
+inline const uint8_t* readAt(uint32_t a, uint32_t n)
+{
+    if (a <= kRamSize - n) return g_ram->data() + a;
+    const uint32_t o = a - kSramBase;
+    if (o <= kSramSize - n && (a + n <= kTempoAddr || a >= kTempoAddr + 4)) return g_ram->data() + kSramShadow + o;
+    return nullptr;
+}
+inline uint8_t* writeAt(uint32_t a, uint32_t n)
+{
+    if (a >= mnm::md::kMainOsBase && a <= kRamSize - n) return g_ram->data() + a;
+    const uint32_t o = a - kSramBase;
+    if (o <= kSramSize - n) return g_ram->data() + kSramShadow + o;
+    return nullptr;
+}
 } // namespace
 
 extern "C" {
 unsigned int m68k_read_memory_8(unsigned int a) { return rd8(a); }
-unsigned int m68k_read_memory_16(unsigned int a) { return (unsigned(rd8(a)) << 8) | rd8(a + 1); }
-unsigned int m68k_read_memory_32(unsigned int a) { return (unsigned(rd8(a)) << 24) | (unsigned(rd8(a + 1)) << 16) | (unsigned(rd8(a + 2)) << 8) | rd8(a + 3); }
+unsigned int m68k_read_memory_16(unsigned int a)
+{
+    if (const uint8_t* p = readAt(a, 2)) return (unsigned(p[0]) << 8) | p[1];
+    return (unsigned(rd8(a)) << 8) | rd8(a + 1);
+}
+unsigned int m68k_read_memory_32(unsigned int a)
+{
+    if (const uint8_t* p = readAt(a, 4)) return (unsigned(p[0]) << 24) | (unsigned(p[1]) << 16) | (unsigned(p[2]) << 8) | p[3];
+    return (unsigned(rd8(a)) << 24) | (unsigned(rd8(a + 1)) << 16) | (unsigned(rd8(a + 2)) << 8) | rd8(a + 3);
+}
 unsigned int m68k_read_disassembler_8(unsigned int a) { return m68k_read_memory_8(a); }
 unsigned int m68k_read_disassembler_16(unsigned int a) { return m68k_read_memory_16(a); }
 unsigned int m68k_read_disassembler_32(unsigned int a) { return m68k_read_memory_32(a); }
 void m68k_write_memory_8(unsigned int a, unsigned int v) { wr8(a, uint8_t(v)); }
-void m68k_write_memory_16(unsigned int a, unsigned int v) { wr8(a, uint8_t(v >> 8)); wr8(a + 1, uint8_t(v)); }
-void m68k_write_memory_32(unsigned int a, unsigned int v) { wr8(a, uint8_t(v >> 24)); wr8(a + 1, uint8_t(v >> 16)); wr8(a + 2, uint8_t(v >> 8)); wr8(a + 3, uint8_t(v)); }
+void m68k_write_memory_16(unsigned int a, unsigned int v)
+{
+    if (uint8_t* p = writeAt(a, 2)) { p[0] = uint8_t(v >> 8); p[1] = uint8_t(v); return; }
+    wr8(a, uint8_t(v >> 8)); wr8(a + 1, uint8_t(v));
+}
+void m68k_write_memory_32(unsigned int a, unsigned int v)
+{
+    if (uint8_t* p = writeAt(a, 4)) { p[0] = uint8_t(v >> 24); p[1] = uint8_t(v >> 16); p[2] = uint8_t(v >> 8); p[3] = uint8_t(v); return; }
+    wr8(a, uint8_t(v >> 24)); wr8(a + 1, uint8_t(v >> 16)); wr8(a + 2, uint8_t(v >> 8)); wr8(a + 3, uint8_t(v));
+}
 void md_m68k_instruction_hook(unsigned int pc)
 {
     if (pc == kReturnPc || (g_stopPc && pc == g_stopPc)) { g_returned = true; m68k_end_timeslice(); }
@@ -119,6 +152,7 @@ bool ControlCpu::call(uint32_t fn, uint32_t stopPc)
     int cycles = 0;
     while (!g_returned && cycles < kMaxCycles) cycles += m68k_execute(10000);
     g_stopPc = 0;
+    m_lastCycles = cycles;
     m_lastPc = m68k_get_reg(nullptr, M68K_REG_PC);
     g_ram = nullptr;
     return g_returned;
@@ -193,14 +227,95 @@ void ControlCpu::lfoTrig(int track)
     if (track >= 0 && track <= 15) sram(kLfos + 36 * uint32_t(track))[5] = 1;   // the OS's trig flag (0x20CE1C)
 }
 
+namespace {
+inline uint32_t be32(const uint8_t* p) { return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]; }
+inline void putBe32(uint8_t* p, uint32_t v) { p[0] = uint8_t(v >> 24); p[1] = uint8_t(v >> 16); p[2] = uint8_t(v >> 8); p[3] = uint8_t(v); }
+inline uint32_t be16(const uint8_t* p) { return (uint32_t(p[0]) << 8) | p[1]; }
+inline void putBe16(uint8_t* p, uint32_t v) { p[0] = uint8_t(v >> 8); p[1] = uint8_t(v); }
+constexpr uint32_t kLfoSaved = 0x26545A;      // MainOS RAM: the 16 words the LFOs' destinations held (put back after)
+constexpr uint32_t kTickScratch = 0x1001D2C;  // SRAM: where the OS's routine parks its registers meanwhile (48 bytes)
+}
+
+// MainOS 0x262592 / 0x2625D4: two raw words at a time, cur = (3 cur + (target << 7)) / 4, as one 32-bit sum (the
+// lower word's carry goes into the upper one's, as it does there)
+void ControlCpu::slewLongs(uint32_t liveAddr, uint32_t targetAddr, int longs)
+{
+    uint8_t* live = sram(liveAddr);
+    const uint8_t* target = sram(targetAddr);
+    for (int i = 0; i < longs; ++i, live += 4, target += 2) {
+        const uint32_t cur = be32(live);
+        const uint32_t v = ((((uint32_t(target[0]) << 16) | target[1]) << 7) + cur * 3u) >> 2;
+        putBe32(live, v & 0x3FFF3FFFu);
+    }
+}
+
+// MainOS 0x262626: each LFO's part goes onto its destination's base word, one LFO after the other (so an LFO on
+// another's depth or mix acts on it), the 16 x 24 words are copied to the live ones, and the base words are put back
+bool ControlCpu::applyLfosNative()
+{
+    const uint8_t* lfos = sram(kLfos);
+    for (int t = 0; t < 16; ++t)
+        if (lfos[36 * t] > 15 || lfos[36 * t + 1] > 23) return false;
+    uint8_t* base = sram(kBase);
+    uint8_t* saved = m_ram.data() + kLfoSaved;
+    for (int t = 0; t < 16; ++t) {
+        const uint8_t* l = lfos + 36 * t;
+        const int index = 24 * l[0] + l[1];
+        const uint32_t mix = be16(base + 48 * t + 46), depth = be16(base + 48 * t + 44);   // the track's own LFO MIX, DEP
+        int32_t v = int32_t((0x3F80u - mix) * be32(l + 0x10) - mix * be32(l + 0x14));     // the two shapes, blended
+        v >>= 14;
+        const uint32_t was = be16(base + 2 * index);
+        putBe16(saved + 2 * t, was);
+        v = int32_t(uint32_t(v) * depth);
+        v >>= 14;
+        v += int32_t(was);
+        if (v > 0x3FFF) v = 0x3FFF;
+        if (v < 0) v = 0;
+        putBe16(base + 2 * index, uint32_t(v));
+    }
+    std::memcpy(sram(kLive), base, 16 * 48);
+    for (int t = 15; t >= 0; --t) {
+        const uint8_t* l = lfos + 36 * t;
+        std::memcpy(base + 2 * (24 * l[0] + l[1]), saved + 2 * t, 2);
+    }
+    return true;
+}
+
+bool ControlCpu::tickRoutines(bool native)
+{
+    bool ok = true;
+    if (native) {
+        slewLongs(kBase, kTargets, 192);
+        if (!applyLfosNative()) { std::lock_guard<std::mutex> lock(g_cpuLock); ok = call(kFnApplyLfos); }
+        slewLongs(kLevelLive, kLevelTargets, 24);
+        return ok;
+    }
+    std::lock_guard<std::mutex> lock(g_cpuLock);
+    ok = call(kFnSlewParams) && ok; m_tickCycles[1] = m_lastCycles;
+    ok = call(kFnApplyLfos) && ok; m_tickCycles[2] = m_lastCycles;
+    ok = call(kFnSlewLevels) && ok; m_tickCycles[3] = m_lastCycles;
+    return ok;
+}
+
 bool ControlCpu::tick(bool lfoUpdate)
 {
-    std::lock_guard<std::mutex> lock(g_cpuLock);
     bool ok = true;
-    if (lfoUpdate) ok = call(kFnLfoUpdate) && ok;
-    ok = call(kFnSlewParams) && ok;
-    ok = call(kFnApplyLfos) && ok;
-    ok = call(kFnSlewLevels) && ok;
+    if (lfoUpdate) { std::lock_guard<std::mutex> lock(g_cpuLock); ok = call(kFnLfoUpdate); m_tickCycles[0] = m_lastCycles; }
+    if (m_verifyTick) {   // both ways from the same state: the same SRAM (but the OS routine's register scratch) and saved words
+        const std::vector<uint8_t> before(sram(kSramBase), sram(kSramBase) + kSramSize);
+        ok = tickRoutines(false) && ok;
+        std::vector<uint8_t> interpreted(sram(kSramBase), sram(kSramBase) + kSramSize);
+        uint8_t savedWords[32];
+        std::memcpy(savedWords, m_ram.data() + kLfoSaved, 32);
+        std::memcpy(sram(kSramBase), before.data(), kSramSize);
+        ok = tickRoutines(true) && ok;
+        std::memset(interpreted.data() + (kTickScratch - kSramBase), 0, 48);
+        std::vector<uint8_t> native(sram(kSramBase), sram(kSramBase) + kSramSize);
+        std::memset(native.data() + (kTickScratch - kSramBase), 0, 48);
+        if (interpreted != native || std::memcmp(savedWords, m_ram.data() + kLfoSaved, 32) != 0) ++m_tickMismatches;
+    } else {
+        ok = tickRoutines(!m_interpretTick) && ok;
+    }
     if (!ok) m_error = "control tick did not finish";
     return ok;
 }

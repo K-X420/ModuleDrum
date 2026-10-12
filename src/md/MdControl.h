@@ -57,6 +57,15 @@ public:
     void setLfoConfig(int track, const uint8_t* first5); // dest track, dest param, shape 1, shape 2, type (state kept)
     void lfoTrig(int track);                             // what a trig does to the track's LFO
     bool tick(bool lfoUpdate);
+    // The tick's three every-block routines (the slews and the LFOs' sum) are done here in C++, word for word what the
+    // OS's code does (MainOS 0x262592, 0x2625D4, 0x262626), not through the interpreter: it took a quarter of the
+    // engine's time. The LFO shapes (every 4th block) still run the OS's own code. setInterpretedTick(true) runs
+    // everything through the interpreter, as before; setVerifyTick(true) runs both ways each tick and counts the ticks
+    // whose results differ (tickMismatches; md-plugintest MD_TICK_TEST).
+    void setInterpretedTick(bool on) { m_interpretTick = on; }
+    void setVerifyTick(bool on) { m_verifyTick = on; }
+    int tickMismatches() const { return m_tickMismatches; }
+    const int* tickCycles() const { return m_tickCycles; }   // dev: the interpreter's cycles of the last tick's four routines (LFO update, slew, LFOs, levels)
     uint16_t liveParam(int track, int k) const;          // raw word, 0..0x3FFF
     uint16_t baseParam(int track, int k) const;          // the slewed word before the LFOs (live - base = the LFO's part)
     uint16_t liveLevel(int track) const;
@@ -77,6 +86,12 @@ private:
     uint32_t m_tempo = 120 * 24;
     const char* m_error = "";
     uint32_t m_lastPc = 0;
+    int m_lastCycles = 0, m_tickCycles[4] = {};
+    bool m_interpretTick = false, m_verifyTick = false;
+    int m_tickMismatches = 0;
+    bool tickRoutines(bool native);   // the slews and the LFOs' sum, one way or the other
+    void slewLongs(uint32_t liveAddr, uint32_t targetAddr, int longs);
+    bool applyLfosNative();           // false: a destination outside the tracks (the interpreter does it then)
 };
 
 } // namespace mnm::md

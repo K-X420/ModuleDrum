@@ -42,6 +42,7 @@ int mdBench(TestEnv& env, const char* value)
     std::printf("BENCH engine %.1f%% of real time (voices %.1f%%, mixer %.1f%%, control tick %.1f%%); %llu + %llu instr/pass\n",
                 100.0 * best[0] / real, 100.0 * best[1] / real, 100.0 * best[2] / real, 100.0 * best[3] / real,
                 (unsigned long long)e->voices().lastPassInstructions(), (unsigned long long)e->mixer().lastBlockInstructions());
+    { const int* c = e->cpu().tickCycles(); std::printf("BENCH control tick cycles: LFO update %d, slew %d, LFOs %d, levels %d\n", c[0], c[1], c[2], c[3]); }
     return 0;
 }
 
@@ -74,6 +75,49 @@ int mdInputTest(TestEnv& env, const char* value)
                   + "% of the input lost (padded " + juce::String(p.devInputPadded()) + ", dropped " + juce::String(p.devInputDropped()) + ")");
         }
     std::printf(fails ? "INPUT TEST FAILED (%d)\n" : "INPUT TEST OK\n", fails);
+    return fails ? 1 : 0;
+}
+
+// MD_TICK_TEST: the control tick's C++ routines against the OS's own code (the interpreter), tick by tick, with the
+// LFOs at work: on each other's depth and mix, on other tracks, knobs and levels moving
+int mdTickTest(TestEnv& env, const char* value)
+{
+    juce::ignoreUnused(value);
+    int fails = 0;
+    auto check = [&](bool ok, const juce::String& what) { std::printf("  %s %s\n", ok ? "ok  " : "FAIL", what.toRawUTF8()); fails += ok ? 0 : 1; };
+    auto pHeap = std::make_unique<MdProcessor>();
+    auto& p = *pHeap;
+    p.setFirmwarePath(juce::String(env.argv[1]), false);
+    p.setPlayConfigDetails(0, 2, 44100.0, 64);
+    p.prepareToPlay(44100.0, 64);
+    auto* e = p.engineForTests();
+    if (!e) { std::printf("TICK TEST FAILED (no engine)\n"); return 1; }
+    e->cpu().setVerifyTick(true);
+    auto set = [&](const juce::String& id, int v) { if (auto* q = p.apvts.getParameter(id)) q->setValueNotifyingHost(q->convertTo0to1(float(v))); };
+    juce::Random r(7);
+    juce::AudioBuffer<float> buf(2, 64);
+    int moved = 0;
+    const int blocks = 6000;
+    for (int i = 0; i < blocks; ++i) {
+        if (i % 20 == 0) {
+            const int t = r.nextInt(16);
+            set(lfoId(t, 0), r.nextInt(16)); set(lfoId(t, 1), r.nextInt(24));
+            set(lfoId(t, 2), r.nextInt(6)); set(lfoId(t, 3), r.nextInt(6)); set(lfoId(t, 4), r.nextInt(3));
+            set(lfoId(t, 5), r.nextInt(128)); set(lfoId(t, 6), r.nextInt(128)); set(lfoId(t, 7), r.nextInt(128));
+            set(knobId(r.nextInt(16), r.nextInt(8)), r.nextInt(128));
+            set(fxId(r.nextInt(16), r.nextInt(8)), r.nextInt(128));
+            set(levelId(r.nextInt(16)), r.nextInt(128));
+            p.auditionTrack(r.nextInt(16));
+        }
+        juce::MidiBuffer midi;
+        buf.clear();
+        p.processBlock(buf, midi);
+        for (int t = 0; t < 16 && moved < 1000000; ++t)
+            for (int k = 0; k < 24; ++k) moved += e->cpu().liveParam(t, k) != e->cpu().baseParam(t, k);
+    }
+    check(moved > 1000, "the LFOs are moving parameters (" + juce::String(moved) + " offsets seen)");
+    check(e->cpu().tickMismatches() == 0, juce::String(blocks * 2) + " ticks, both ways: " + juce::String(e->cpu().tickMismatches()) + " differ");
+    std::printf(fails ? "TICK TEST FAILED (%d)\n" : "TICK TEST OK\n", fails);
     return fails ? 1 : 0;
 }
 
