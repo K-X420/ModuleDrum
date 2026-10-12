@@ -27,6 +27,7 @@ int mdOscheckTest(TestEnv& env, const char* value);
 int mdRateTest(TestEnv& env, const char* value);
 int mdParityTest(TestEnv& env, const char* value);
 int mdXtraTest(TestEnv& env, const char* value);
+int mdToolsTest(TestEnv& env, const char* value);
 int mdInputTest(TestEnv& env, const char* value);
 int mdBench(TestEnv& env, const char* value);   // MD_BENCH: timing, not a check
 

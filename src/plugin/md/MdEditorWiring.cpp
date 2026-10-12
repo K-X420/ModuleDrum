@@ -109,7 +109,7 @@ void MdEditor::wireKeys()
             if ((p.trigs[t] >> s) & 1) { p.trigs[t] &= ~(1ull << s); p.clearStepLocks(t, s); p.clearStepExtras(t, s); removed = true; }
             else p.trigs[t] |= 1ull << s;
         });
-        if (removed && s == m_heldStep) holdStep(-1);
+        if (removed) holdSteps(m_heldSet & ~(1ull << s));
         refreshGrid();
     };
     m_keys.onPaint = [this](int s, bool on, bool first) {   // one stroke = one undo step
@@ -119,10 +119,16 @@ void MdEditor::wireKeys()
             if (on) p.trigs[t] |= 1ull << s;
             else { p.trigs[t] &= ~(1ull << s); p.clearStepLocks(t, s); p.clearStepExtras(t, s); }
         }, 20000 + (m_paintStroke & 0xFFFF));
-        if (!on && s == m_heldStep) holdStep(-1);
+        if (!on) holdSteps(m_heldSet & ~(1ull << s));
         refreshGrid();
     };
-    m_keys.onHold = [this](int s) { holdStep(s == m_heldStep ? -1 : s); };
+    m_keys.onHold = [this](int s) { holdStep(m_heldSet == (1ull << s) ? -1 : s); };   // the only held step again: let go
+    m_keys.onHoldAdd = [this](int s) { holdSteps(m_heldSet ^ (1ull << s), m_heldStep); };
+    m_keys.onHoldRange = [this](int a, int b) {
+        uint64_t m = 0;
+        for (int s = juce::jmin(a, b); s <= juce::jmax(a, b); ++s) m |= 1ull << s;
+        holdSteps(m, a);
+    };
     m_keys.onFlag = [this](int s, int f) { flipStepFlag(s, f); };
     m_keys.onMarkPaint = [this](int s, int f, bool on, bool first) {   // one stroke = one undo step
         if (first) ++m_paintStroke;
@@ -133,7 +139,8 @@ void MdEditor::wireKeys()
             uint64_t* global[3] = {&p.accent, &p.slide, &p.swing};
             uint64_t* own[3] = {&p.accentPerTrack[t], &p.slidePerTrack[t], &p.swingPerTrack[t]};
             uint64_t& m = *(all[f] ? global[f] : own[f]);
-            if (on) m |= 1ull << s; else m &= ~(1ull << s);
+            const uint64_t steps = heldTargets(s);   // a held step: every held step
+            if (on) m |= steps; else m &= ~steps;
         }, 20000 + (m_paintStroke & 0xFFFF));
         refreshGrid();
     };
@@ -144,7 +151,8 @@ void MdEditor::wireKeys()
         if (!p || !((p->trigs[t] >> s) & 1)) { if (first) flash("NO TRIG"); return; }   // extras belong to a trig
         static const char* const names[3] = {"condition", "micro-timing", "retrig"};
         const int v = on ? m_lastExtra[size_t(kind)] : 0;
-        doEdit(editSlot(), names[kind], [&](mnm::mddump::Pattern& x) { setStepExtra(x, t, s, kind, v); }, 20000 + (m_paintStroke & 0xFFFF));
+        const uint64_t steps = heldTargets(s) & p->trigs[t];   // a held step: every held step (with a trig)
+        doEdit(editSlot(), names[kind], [&](mnm::mddump::Pattern& x) { for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) setStepExtra(x, t, q, kind, v); }, 20000 + (m_paintStroke & 0xFFFF));
         refreshGrid();
     };
     m_keys.onExtraWheel = [this](int s, int kind, int delta, bool alt) {   // the value, as a knob turned on a held trig
@@ -160,9 +168,61 @@ void MdEditor::wireKeys()
         else v = dd::makeRetrig(juce::jlimit(0, 7, dd::retrigRate(uint8_t(v)) + delta), dd::retrigSteps(uint8_t(v)));
         if (v != 0) m_lastExtra[size_t(kind)] = v;   // the next click sets this
         static const char* const names[3] = {"condition", "micro-timing", "retrig"};
-        doEdit(editSlot(), names[kind], [&](dd::Pattern& x) { setStepExtra(x, t, s, kind, v); }, 40000 + kind * 64 + s);
+        doEdit(editSlot(), names[kind], [&](dd::Pattern& x) { const uint64_t steps = heldTargets(s) & x.trigs[t]; for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) setStepExtra(x, t, q, kind, v); }, 40000 + kind * 64 + s);
         flash(extraText(kind, v));
         refreshGrid();
+    };
+    m_keys.onGenClick = [this](int key, bool shift, bool alt) {
+        m_gen.mode = alt ? 3 : shift ? 2 : 1;
+        m_gen.n = key + 1;
+        if (shift) m_gen.seed = juce::Random::getSystemRandom().nextInt64();   // every click another roll
+        genApply((alt ? "EVERY " : shift ? "RANDOM " : "EVEN ") + juce::String(key + 1));
+    };
+    m_keys.onGenWheel = [this](int dir) { m_gen.rot += dir; genApply("ROT " + juce::String(m_gen.rot > 0 ? "+" : "") + juce::String(m_gen.rot)); };
+    m_keys.onLaneSet = [this](int s, int v, bool first) {   // one stroke = one undo step
+        if (first) ++m_paintStroke;
+        const int t = m_track, q = m_laneParam;
+        const auto p = m_proc.bankPattern(editSlot());
+        if (!p || !((p->trigs[t] >> s) & 1)) { if (first) flash("NO TRIG"); return; }   // a lock belongs to a trig
+        bool full = false;
+        doEdit(editSlot(), "lock lane", [&](mnm::mddump::Pattern& x) { full = !x.setLock(t, q, s, v); }, 20000 + (m_paintStroke & 0xFFFF));
+        flash(full ? juce::String("LOCKFULL") : laneName() + " " + juce::String(v));
+        if (m_heldSet) for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
+    };
+    m_keys.onLaneRamp = [this](int s0, int v0, int s1, int v1) {   // a straight line over the trigs between
+        const int t = m_track, q = m_laneParam;
+        if (s0 == s1) return;
+        doEdit(editSlot(), "lock ramp", [&](mnm::mddump::Pattern& x) {
+            for (int s = juce::jmin(s0, s1); s <= juce::jmax(s0, s1); ++s)
+                if ((x.trigs[t] >> s) & 1) x.setLock(t, q, s, juce::jlimit(0, 127, v0 + int(std::lround(double(v1 - v0) * (s - s0) / (s1 - s0)))));
+        }, 20000 + (m_paintStroke & 0xFFFF));
+        flash(juce::String(v0) + ">" + juce::String(v1));
+    };
+    m_keys.onLaneClear = [this](int s, bool first) {
+        if (first) ++m_paintStroke;
+        const int t = m_track, q = m_laneParam;
+        doEdit(editSlot(), "clear lock", [&](mnm::mddump::Pattern& x) { x.clearLock(t, q, s); }, 20000 + (m_paintStroke & 0xFFFF));
+        refreshGrid();
+    };
+    m_keys.onLaneWheel = [this](int s, int delta) {
+        const int t = m_track, q = m_laneParam;
+        const auto p = m_proc.bankPattern(editSlot());
+        if (!p || !((p->trigs[t] >> s) & 1)) { flash("NO TRIG"); return; }
+        const int row = p->lockRow(t, q);
+        const int v = juce::jlimit(0, 127, (row >= 0 && p->locks[row][s] <= 127 ? int(p->locks[row][s]) : laneKitValue()) + delta);
+        doEdit(editSlot(), "lock lane", [&](mnm::mddump::Pattern& x) { x.setLock(t, q, s, v); }, 45000 + s);
+        flash(laneName() + " " + juce::String(v));
+    };
+    m_keys.onTrackLen = [this](int s) {   // EXTRAS: the track loops at this step (again, or the pattern's last: off)
+        if (!m_proc.extrasOn()) { flash("XTRA OFF"); return; }
+        const int t = m_track;
+        int now = 0;
+        doEdit(editSlot(), "track length", [&](mnm::mddump::Pattern& x) {
+            const int want = s + 1;
+            x.trackLen[t] = uint8_t(want == x.trackLen[t] || want >= juce::jlimit(1, 64, int(x.length)) ? 0 : want);
+            now = x.trackLen[t];
+        });
+        flash("T" + juce::String(t + 1) + (now ? " L=" + juce::String(now) : juce::String(" L=PTN")));
     };
     m_keys.onSelect = [this](int t) { selectTrack(t); };
     m_keys.onMuteKey = [this](int t) { toggleMute(t); };

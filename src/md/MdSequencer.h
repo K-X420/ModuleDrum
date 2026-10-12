@@ -61,6 +61,9 @@ public:
     int clocksPerStep() const { return m_step; }
     double lengthClocks() const { return double(m_span) * m_step; }
     int stepOf(int64_t stepIndex) const { return m_start + int(stepIndex % m_span); }
+    // With the extras, a track with its own length (shorter than the pass) loops there
+    int spanOf(int track, bool extras) const { const int l = m_p.trackLen[track]; return extras && l > 0 && l < m_span ? l : m_span; }
+    int stepOf(int64_t stepIndex, int track, bool extras) const { return m_start + int(stepIndex % spanOf(track, extras)); }
     double swingClocks() const { return m_swing; }    // the delay of a swung step
 
     bool swung(int track, int step) const { return bit(m_p.swingEditAll, m_p.swing, m_p.swingPerTrack[track], step); }
@@ -74,7 +77,7 @@ public:
     // come after the last step's end (a pattern change, a song row's end).
     // With ctx.extras, a trig plays when its condition does (conditionPlays), at its micro-timing, then its retrigs.
     void trigs(double from, double to, std::vector<SeqTrig>& out, int64_t maxSteps = -1, const TrigContext& ctx = {}) const;
-    SeqTrig trigAt(int64_t stepIndex, int track) const;   // the trig of that step (it must have one)
+    SeqTrig trigAt(int64_t stepIndex, int track, bool extras = false) const;   // the trig of that step (it must have one)
     // Does the trig of (stepIndex, track) pass its condition? Passes count from the origin; PRE / NEI look back at the
     // last trig with another kind of condition on the track / the track before (none: false). No condition: true.
     bool conditionPlays(int64_t stepIndex, int track, const TrigContext& ctx) const;

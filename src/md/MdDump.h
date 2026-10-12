@@ -73,6 +73,7 @@ struct Pattern {
     uint8_t cond[kTracks][64] = {};
     int8_t micro[kTracks][64] = {};
     uint8_t retrig[kTracks][64] = {};
+    uint8_t trackLen[kTracks] = {};   // a track's own length in steps (it loops there); 0 = the pattern's
     bool hasExtras() const;
     void clearStepExtras(int track, int step);
 };
@@ -161,8 +162,9 @@ std::vector<uint8_t> encodeKit(const Kit& kit);
 std::vector<uint8_t> encodePattern(const Pattern& pat);
 std::vector<uint8_t> encodeSong(const Song& song);
 // A pattern's extras as a message of their own (empty when it has none): F0 7D 'M' 'N' 'X' <version 1> <position>
-// then an entry per step with any (track, step, cond, micro + 64, retrig) F7. 7D is MIDI's non-commercial ID: a real
-// MD ignores the message. parseDump puts them back on the pattern of that position.
+// then an entry per step with any (track, step, cond, micro + 64, retrig) F7; a track's own length is an entry
+// (0x40 + track, length, 0, 64, 0). 7D is MIDI's non-commercial ID: a real MD ignores the message. parseDump puts them
+// back on the pattern of that position.
 std::vector<uint8_t> encodePatternExtras(const Pattern& pat);
 bool decodePatternExtras(const uint8_t* msg, size_t n, int& position, Pattern& pat);   // only the extras fields
 bool isPatternExtras(const uint8_t* msg, size_t n);

@@ -4,11 +4,17 @@
 
 namespace mnm::plugin::md {
 
-void MdEditor::holdStep(int step)
+void MdEditor::holdStep(int step) { holdSteps(step >= 0 ? 1ull << step : 0, step); }
+
+void MdEditor::holdSteps(uint64_t mask, int primary)
 {
-    if (step == m_heldStep) return;
-    m_heldStep = step;
-    const juce::String badge = step >= 0 ? "LOCK" + juce::String(step + 1) : juce::String();
+    if (mask == 0) primary = -1;
+    else if (primary < 0 || !((mask >> primary) & 1)) { primary = 0; while (!((mask >> primary) & 1)) ++primary; }   // the first one
+    if (mask == m_heldSet && primary == m_heldStep) return;
+    m_heldSet = mask;
+    const int step = m_heldStep = primary;
+    int count = 0; for (int s = 0; s < 64; ++s) count += int((mask >> s) & 1);
+    const juce::String badge = step < 0 ? juce::String() : count > 1 ? "LOCK X" + juce::String(count) : "LOCK" + juce::String(step + 1);
     for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->setBadge(step >= 0 ? badge.toRawUTF8() : nullptr);
     m_shownMachineId = -2;
     m_pagesMachineId = -2;
@@ -61,7 +67,7 @@ void MdEditor::stepMenu(int s)
                 default: break;
             }
         });
-        if (r == 1 && s == m_heldStep) holdStep(-1);
+        if (r == 1) holdSteps(m_heldSet & ~(1ull << s));
         refreshGrid();
     });
 }
@@ -70,7 +76,8 @@ void MdEditor::doEdit(int slot, const juce::String& label, const std::function<v
 {
     seqOn();
     const auto now = juce::Time::currentTimeMillis();
-    const bool merge = coalesce >= 0 && !m_undo.empty() && m_undo.back().slot == slot && m_lastCoalesce == coalesce && now - m_lastEditMs < 1000;
+    // (a GENERATE run, 50000 and up, is one step however long it takes)
+    const bool merge = coalesce >= 0 && !m_undo.empty() && m_undo.back().slot == slot && m_lastCoalesce == coalesce && (now - m_lastEditMs < 1000 || coalesce >= 50000);
     if (!merge) {
         m_undo.push_back({slot, m_proc.bankPattern(slot), nullptr, label});
         if (m_undo.size() > 200) m_undo.erase(m_undo.begin());
@@ -150,6 +157,20 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
             return true;
         }
         if (code == juce::KeyPress::escapeKey && m_markMode) { m_markMode = 0; refreshGrid(); return true; }
+        if (code == juce::KeyPress::escapeKey && m_heldSet) { holdStep(-1); return true; }   // let the held steps go
+        if (code == 'E' || code == 'e') {   // GENERATE: the keys are hit counts
+            m_markMode = m_markMode == 7 ? 0 : 7;
+            if (m_markMode) genBegin();
+            flash(m_markMode ? juce::String("GENERATE") : juce::String("TRIGS"));
+            return true;
+        }
+        if (code == 'L' || code == 'l') {   // LANE: one parameter's locks across the page
+            m_markMode = m_markMode == 8 ? 0 : 8;
+            const auto p = m_proc.bankPattern(editSlot());
+            flash(m_markMode ? laneName() + " " + juce::String(p ? int(p->numLockedRows) : 0) + "/64" : juce::String("TRIGS"));   // the parameter, the lock rows in use
+            return true;
+        }
+        if ((code == 'H' || code == 'h') && m_markMode == 5) { humanise(false); return true; }
         const int x = !m_proc.extrasOn() ? -1 : code == 'C' || code == 'c' ? 0 : code == 'T' || code == 't' ? 1 : code == 'R' || code == 'r' ? 2 : -1;
         if (x >= 0) {   // EXTRAS: the CONDITION / MICRO-TIMING / RETRIG edit window (again: back to the trigs)
             static const char* const names[3] = {"COND", "MICRO", "RETRIG"};
@@ -165,8 +186,10 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
         refreshGrid();
         return true;
     }
+    if (!mods.isCtrlDown() && !mods.isCommandDown() && !mods.isAltDown() && (k.getKeyCode() == 'U' || k.getKeyCode() == 'u')) { mutate(mods.isShiftDown()); return true; }
     if (m_gridOn && mods.isShiftDown() && !mods.isCtrlDown() && !mods.isCommandDown() && !mods.isAltDown()) {   // all tracks <-> this track
         const int code = k.getKeyCode();
+        if ((code == 'H' || code == 'h') && m_markMode == 5) { humanise(true); return true; }
         const int f = code == 'A' || code == 'a' ? 0 : code == 'S' || code == 's' ? 1 : code == 'W' || code == 'w' ? 2 : -1;
         if (f >= 0) { togglePerTrack(f); return true; }
     }
@@ -181,8 +204,8 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
         return true;
     }
     if (m_heldStep >= 0 && (k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey)) {   // the held step's locks
-        const int t = m_track, s = m_heldStep;
-        doEdit(editSlot(), "clear note locks", [&](mnm::mddump::Pattern& x) { x.clearStepLocks(t, s); });
+        const int t = m_track;
+        doEdit(editSlot(), "clear note locks", [&](mnm::mddump::Pattern& x) { for (int s = 0; s < 64; ++s) if ((m_heldSet >> s) & 1) x.clearStepLocks(t, s); });
         flash("LOCKS CLEARED");
         for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
         refreshGrid();
@@ -197,7 +220,12 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
     if ((mods.isCommandDown() || mods.isCtrlDown()) && !mods.isShiftDown() && (k.getKeyCode() == 'R' || k.getKeyCode() == 'r')) { reloadKit(); return true; }
     if (m_heldStep >= 0 && (mods.isCommandDown() || mods.isCtrlDown()) && (k.getKeyCode() == 'C' || k.getKeyCode() == 'c')) { copyNote(m_heldStep); return true; }
     if (m_heldStep >= 0 && (mods.isCommandDown() || mods.isCtrlDown()) && (k.getKeyCode() == 'V' || k.getKeyCode() == 'v')) { pasteNote(m_heldStep); return true; }
-    if ((k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey) && m_gridOn) { pageOp(2, page); return true; }
+    if (m_heldStep >= 0 && (mods.isCommandDown() || mods.isCtrlDown()) && (k.getKeyCode() == 'X' || k.getKeyCode() == 'x')) { cutNotes(); return true; }
+    if (m_heldStep >= 0 && (mods.isCommandDown() || mods.isCtrlDown()) && (k.getKeyCode() == 'D' || k.getKeyCode() == 'd')) { duplicateNotes(); return true; }
+    if ((k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey) && m_gridOn) {
+        if (m_markMode >= 1 && m_markMode != 7) clearLayer(page); else pageOp(2, page);   // in an edit window: its layer only
+        return true;
+    }
     if (!mods.isCommandDown() && !mods.isCtrlDown()) return false;
     const int code = k.getKeyCode();
     if (code == 'C' || code == 'c') { pageOp(0, page); return true; }
@@ -207,6 +235,113 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
     if (code == 'Z' || code == 'z') { undo(); return true; }
     if (code == 'Y' || code == 'y') { redo(); return true; }
     return false;
+}
+
+void MdEditor::genBegin()
+{
+    ++m_gen.session;
+    m_gen.slot = editSlot(); m_gen.track = m_track; m_gen.mode = 0; m_gen.n = 0; m_gen.rot = 0;
+    const auto p = m_proc.bankPattern(m_gen.slot);
+    m_gen.base = p ? *p : mnm::mddump::Pattern();
+}
+
+void MdEditor::genApply(const juce::String& say)
+{
+    if (m_gen.slot != editSlot() || m_gen.track != m_track) genBegin();
+    const Gen& g = m_gen;
+    const int t = m_track;
+    doEdit(g.slot, "generate", [&](mnm::mddump::Pattern& x) {
+        const int len = juce::jlimit(1, 64, int(x.length)), pages = (len + 15) / 16;
+        const int hits = juce::jmin(len, g.n * pages);
+        uint64_t m = 0;
+        if (g.mode == 1) { for (int i = 0; i < len; ++i) if ((i * hits) % len < hits) m |= 1ull << i; }   // spread evenly, the first on step 1
+        else if (g.mode == 2) { juce::Random r(g.seed); for (int left = hits; left > 0;) { const int s = r.nextInt(len); if (!((m >> s) & 1)) { m |= 1ull << s; --left; } } }
+        else if (g.mode == 3) for (int i = 0; i < len; i += juce::jmax(1, g.n)) m |= 1ull << i;
+        x.clearSteps(0, len, t);
+        const int rot = ((g.rot % len) + len) % len;
+        for (int s = 0; s < len; ++s) {
+            const int d = (s + rot) % len;
+            if (g.mode == 0) { if ((g.base.trigs[t] >> s) & 1) x.copySteps(g.base, s, d, 1, t, t); continue; }   // only turned round
+            if (!((m >> s) & 1)) continue;
+            if ((g.base.trigs[t] >> d) & 1) x.copySteps(g.base, d, d, 1, t, t);   // a step that was there keeps its locks
+            else x.trigs[t] |= 1ull << d;
+        }
+    }, 50000 + (g.session & 0xFFF));
+    holdStep(-1);
+    flash(say);
+}
+
+juce::String MdEditor::laneName() const
+{
+    if (auto* prm = m_proc.apvts.getParameter(trackParamId(m_track, m_laneParam))) return prm->getName(32).fromFirstOccurrenceOf(" ", false, false);
+    return juce::String(m_laneParam);
+}
+
+int MdEditor::laneKitValue() const
+{
+    if (auto* a = m_proc.apvts.getParameter(trackParamId(m_track, m_laneParam))) return juce::jlimit(0, 127, int(std::lround(a->convertFrom0to1(a->getValue()))));
+    return 0;
+}
+
+void MdEditor::clearLayer(int page)
+{
+    static const char* const names[9] = {"", "ACC", "SLD", "SWG", "COND", "TIME", "RTRG", "", "LANE"};
+    const int t = m_track, mode = m_markMode, lane = m_laneParam;
+    doEdit(editSlot(), "clear layer", [&](mnm::mddump::Pattern& x) {
+        for (int s = page * 16; s < page * 16 + 16 && s < 64; ++s) {
+            const uint64_t bit = 1ull << s;
+            switch (mode) {
+                case 1: (x.accentEditAll ? x.accent : x.accentPerTrack[t]) &= ~bit; break;
+                case 2: (x.slideEditAll ? x.slide : x.slidePerTrack[t]) &= ~bit; break;
+                case 3: (x.swingEditAll ? x.swing : x.swingPerTrack[t]) &= ~bit; break;
+                case 4: x.cond[t][s] = 0; break;
+                case 5: x.micro[t][s] = 0; break;
+                case 6: x.retrig[t][s] = 0; break;
+                case 8: x.clearLock(t, lane, s); break;
+                default: break;
+            }
+        }
+    });
+    flash(juce::String(names[juce::jlimit(0, 8, mode)]) + " CLR");
+    for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
+}
+
+void MdEditor::humanise(bool more)
+{
+    if (more) { static const int steps[4] = {2, 4, 8, 12}; int i = 0; while (i < 4 && steps[i] <= m_humanise) ++i; m_humanise = steps[i % 4]; }
+    const int t = m_track, amt = m_humanise;
+    auto& r = juce::Random::getSystemRandom();
+    doEdit(editSlot(), "humanise", [&](mnm::mddump::Pattern& x) {
+        for (int s = 0; s < juce::jlimit(1, 64, int(x.length)); ++s)
+            if ((x.trigs[t] >> s) & 1) x.micro[t][s] = int8_t(r.nextInt(2 * amt + 1) - amt);
+    }, 46000 + t);
+    flash("HUM +-" + juce::String(amt));
+}
+
+void MdEditor::mutate(bool withFx)
+{
+    const int t = m_track, n = withFx ? 16 : 8;
+    auto id = [t](int i) { return i < 8 ? knobId(t, i) : fxId(t, i - 8); };
+    std::array<int, 16> now{};
+    for (int i = 0; i < 16; ++i)
+        if (auto* a = m_proc.apvts.getParameter(id(i))) now[size_t(i)] = int(std::lround(a->convertFrom0to1(a->getValue())));
+    if (m_mut.track != t || m_mut.fx != withFx || now != m_mut.last) {   // a new start (anything else: another roll from the same one)
+        m_mut.track = t; m_mut.fx = withFx; m_mut.base = now;
+        m_kitUndo = {true, m_proc.captureMdKit(), m_proc.loadedKitKey(), m_proc.kitName()};
+    }
+    auto& r = juce::Random::getSystemRandom();
+    m_mut.last = now;
+    for (int i = 0; i < n; ++i) {
+        auto* a = m_proc.apvts.getParameter(id(i));
+        if (!a) continue;
+        const int base = m_mut.base[size_t(i)];
+        const int v = juce::jlimit(0, 127, base + int(std::lround((r.nextInt(128) - base) * 0.2)));
+        m_mut.last[size_t(i)] = v;
+        if (v == now[size_t(i)]) continue;
+        a->beginChangeGesture(); a->setValueNotifyingHost(a->convertTo0to1(float(v))); a->endChangeGesture();
+    }
+    flash(withFx ? "MUT S+FX" : "MUTATE");
+    for (auto* pg : {&m_syn, &m_fx}) { pg->pull(); pg->repaint(); }
 }
 
 // DEL PAGE: the page goes, the pages after it move up and the pattern is 16 steps shorter (one page: its steps cleared)
@@ -244,23 +379,77 @@ void MdEditor::shiftTrack(int dir)
     refreshGrid();
 }
 
+namespace {
+int lowest(uint64_t m) { int s = 0; while (s < 64 && !((m >> s) & 1)) ++s; return s; }
+int highest(uint64_t m) { int s = 63; while (s >= 0 && !((m >> s) & 1)) --s; return s; }
+int countOf(uint64_t m) { int n = 0; for (int s = 0; s < 64; ++s) n += int((m >> s) & 1); return n; }
+}
+
+// The held steps that have a trig (step: one of them, or a single step) go to the clipboard, with where they sit
 void MdEditor::copyNote(int step)
 {
     const auto p = m_proc.bankPattern(editSlot());
-    if (!p || !((p->trigs[m_track] >> step) & 1)) { flash("NO NOTE"); return; }
-    m_clip = {4, false, m_track, step, *p};
-    flash("COPY NOTE " + juce::String(step + 1));
+    const uint64_t mask = p ? heldTargets(step) & p->trigs[m_track] : 0;
+    if (mask == 0) { flash("NO NOTE"); return; }
+    m_clip = {4, false, m_track, lowest(mask), *p, mask};
+    flash(countOf(mask) > 1 ? "COPY " + juce::String(countOf(mask)) : "COPY NOTE " + juce::String(lowest(mask) + 1));
 }
 
+// The copied notes from `step` on, as they were spaced; the ones past the pattern's end are left out (and counted)
 void MdEditor::pasteNote(int step)
 {
     if (m_clip.kind != 4) { flash("NO NOTE"); return; }
     const auto clip = m_clip;
     const int t = m_track;
-    doEdit(editSlot(), "paste note", [&](mnm::mddump::Pattern& x) { x.copySteps(clip.pat, clip.page, step, 1, clip.track, t); });
-    flash("PASTE NOTE " + juce::String(step + 1));
+    int placed = 0, off = 0;
+    doEdit(editSlot(), "paste note", [&](mnm::mddump::Pattern& x) {
+        const int len = juce::jlimit(1, 64, int(x.length));
+        for (int s = 0; s < 64; ++s) {
+            if (!((clip.mask >> s) & 1)) continue;
+            const int d = step + s - clip.page;
+            if (d < 0 || d >= len) { ++off; continue; }
+            x.copySteps(clip.pat, s, d, 1, clip.track, t);
+            ++placed;
+        }
+    });
+    flash(off ? "PST " + juce::String(placed) + " -" + juce::String(off) : placed > 1 ? "PASTE " + juce::String(placed) : "PASTE NOTE " + juce::String(step + 1));   // (-n: past the end)
     for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
     refreshGrid();
+}
+
+void MdEditor::cutNotes()
+{
+    const int first = m_heldStep;
+    copyNote(first);
+    if (m_clip.kind != 4) return;
+    const uint64_t mask = m_clip.mask;
+    const int t = m_track;
+    doEdit(editSlot(), "cut notes", [&](mnm::mddump::Pattern& x) { for (int s = 0; s < 64; ++s) if ((mask >> s) & 1) x.clearSteps(s, 1, t); });
+    holdStep(-1);
+    flash("CUT " + juce::String(countOf(mask)));
+}
+
+// The held steps again right after themselves, then those held: Ctrl + D over and over walks a figure along the page
+void MdEditor::duplicateNotes()
+{
+    const auto p = m_proc.bankPattern(editSlot());
+    const uint64_t held = m_heldSet;
+    if (!p || held == 0) return;
+    const int lo = lowest(held), hi = highest(held), span = hi - lo + 1, len = juce::jlimit(1, 64, int(p->length)), t = m_track;
+    if (hi + 1 >= len) { flash("NO ROOM"); return; }
+    const auto src = *p;
+    uint64_t made = 0;
+    doEdit(editSlot(), "duplicate notes", [&](mnm::mddump::Pattern& x) {
+        for (int s = lo; s <= hi; ++s) {
+            const int d = s + span;
+            if (d >= len) continue;
+            if ((held >> s) & 1) { x.copySteps(src, s, d, 1, t, t); made |= 1ull << d; }
+            else x.clearSteps(d, 1, t);   // the gaps of the figure too
+        }
+    });
+    holdSteps(made);
+    flash("DUP");
+    for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
 }
 
 void MdEditor::applyMuteQueue()

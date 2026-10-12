@@ -72,15 +72,22 @@ public:
         int page = 0, length = 16, play = -1, held = -1;
         uint64_t trigs = 0, accent = 0, slide = 0, swing = 0, locks = 0;
         int mark = 0;   // 0 the trigs; 1 ACCENT, 2 SLIDE, 3 SWING: the keys show / flip that mark (as the MD's edit windows);
-                        // EXTRAS: 4 CONDITION, 5 MICRO-TIMING, 6 RETRIG: the keys show the selected track's value
+                        // EXTRAS: 4 CONDITION, 5 MICRO-TIMING, 6 RETRIG: the keys show the selected track's value;
+                        // 7 GENERATE (the keys are hit counts), 8 LANE (one parameter's locks as bars)
+        int trackLen = 0;                 // EXTRAS: the track's own length (0: the pattern's); the steps past it are off
+        std::array<int16_t, 64> lane{};   // LANE: the parameter's lock per step (-1 none)
+        int laneKit = 0;                  // and its value without a lock
         std::array<uint8_t, 64> cond{}, retrig{};
         std::array<int8_t, 64> micro{};
-        bool operator==(const Grid& o) const { return mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
+        uint64_t heldSet = 0;   // every held step (held is the first of them: the knobs show its locks)
+        bool operator==(const Grid& o) const { return trackLen == o.trackLen && lane == o.lane && laneKit == o.laneKit && heldSet == o.heldSet && mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
         int extra(int s) const { return mark == 4 ? cond[size_t(s)] : mark == 5 ? micro[size_t(s)] : mark == 6 ? retrig[size_t(s)] : 0; }
     };
     void setGrid(const Grid& g) { if (!(g == m_grid)) { m_grid = g; repaint(); } }
     std::function<juce::String(int step)> stepLocks;   // GRID: a step's locks as text for its tooltip ("" none)
     std::function<void(int step)> onStep, onHold;
+    std::function<void(int step)> onHoldAdd;            // Ctrl + Shift + click: one more held step (or one fewer)
+    std::function<void(int from, int to)> onHoldRange;  // Shift + drag: the steps from..to held
     std::function<void(int step, bool on, bool first)> onPaint;   // GRID click / drag: set a step's trig (first = a new stroke)
     std::function<void(int step, int flag)> onFlag;               // GRID: a step's A / S / W button (0 accent, 1 slide, 2 swing)
     std::function<void(int step, int flag, bool on, bool first)> onMarkPaint;   // an edit window: click / drag sets the mark
@@ -88,6 +95,17 @@ public:
     // the wheel over a step changes its value (alt: Shift, a retrig's length)
     std::function<void(int step, int kind, bool on, bool first)> onExtraPaint;
     std::function<void(int step, int kind, int delta, bool alt)> onExtraWheel;
+    // GENERATE: a click on key n = n hits a page spread evenly (Shift: n at random, Alt: every n-th step); the wheel turns
+    // the track's steps round
+    std::function<void(int key, bool shift, bool alt)> onGenClick;
+    std::function<void(int dir)> onGenWheel;
+    // LANE: a press / drag at a height on a step sets the parameter's lock there (Shift + drag: a ramp from where it
+    // began; Alt: the lock goes); the wheel nudges it
+    std::function<void(int step, int value, bool first)> onLaneSet;
+    std::function<void(int fromStep, int fromValue, int toStep, int toValue)> onLaneRamp;
+    std::function<void(int step, bool first)> onLaneClear;
+    std::function<void(int step, int delta)> onLaneWheel;
+    std::function<void(int step)> onTrackLen;   // Ctrl + Alt + click: the track's last step (again: the pattern's length)
     std::function<void(int step)> onStepMenu;
     std::function<void(int track)> onSelect, onMuteKey;   // Ctrl / Cmd + click: select; Alt + click: mute (as FUNC + trig)
     int devSeqStep() const { return m_seqStep; }   // dev/tests
@@ -104,10 +122,13 @@ private:
     juce::Rectangle<int> muteBox(int t) const { const auto r = keyRect(t); return {r.getRight() - 11, r.getBottom() - 11, 9, 9}; }
     void mouseMove(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
-    void mouseUp(const juce::MouseEvent&) override { m_painting = false; }
+    void mouseUp(const juce::MouseEvent&) override { m_painting = false; m_holdFrom = -1; m_laneDrag = 0; }
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     uint32_t m_lastWheel = 0;
     bool m_painting = false, m_paintOn = false;
+    int m_holdFrom = -1;   // a Shift + drag in progress: where it began
+    int m_laneDrag = 0, m_laneFrom = -1, m_laneFromValue = 0, m_laneLast = -1;   // LANE: 1 draw, 2 ramp, 3 clear
+    int laneValueAt(int key, juce::Point<int> lcd) const;
     uint16_t m_muteQueue = 0;
     int m_paintLast = -1;
     int m_selected = 0;
@@ -184,6 +205,9 @@ public:
     // dev/tests: the GRID as clicks drive it
     void devStep(int s) { if (m_keys.onStep) m_keys.onStep(s); }
     void devHold(int s) { holdStep(s); }
+    void devHoldAdd(int s) { if (m_keys.onHoldAdd) m_keys.onHoldAdd(s); }
+    void devHoldRange(int a, int b) { if (m_keys.onHoldRange) m_keys.onHoldRange(a, b); }
+    uint64_t devHeldSet() const { return m_heldSet; }
     void devShiftTrack(int dir) { shiftTrack(dir); }
     void devFlag(int s, int f) { flipStepFlag(s, f); }
     void devPerTrack(int f) { togglePerTrack(f); }
@@ -192,6 +216,14 @@ public:
     void devExtraPaint(int s, int kind, bool on, bool first) { if (m_keys.onExtraPaint) m_keys.onExtraPaint(s, kind, on, first); }
     void devExtraWheel(int s, int kind, int delta, bool alt) { if (m_keys.onExtraWheel) m_keys.onExtraWheel(s, kind, delta, alt); }
     int devMarkModeNow() const { return m_markMode; }
+    void devGenClick(int key, bool shift, bool alt) { if (m_keys.onGenClick) m_keys.onGenClick(key, shift, alt); }
+    void devGenWheel(int dir) { if (m_keys.onGenWheel) m_keys.onGenWheel(dir); }
+    void devLaneParam(int p) { m_laneParam = p; refreshGrid(); }
+    void devLaneSet(int s, int v, bool first) { if (m_keys.onLaneSet) m_keys.onLaneSet(s, v, first); }
+    void devLaneRamp(int s0, int v0, int s1, int v1) { if (m_keys.onLaneRamp) m_keys.onLaneRamp(s0, v0, s1, v1); }
+    void devLaneClear(int s) { if (m_keys.onLaneClear) m_keys.onLaneClear(s, true); }
+    void devTrackLen(int s) { if (m_keys.onTrackLen) m_keys.onTrackLen(s); }
+    void devMutate(bool fx) { mutate(fx); }
     void devUndoKit() { undoKit(); }
     void devSelectTrack(int t) { selectTrack(t); }
     void devCopyMachine() { copyMachine(); }
@@ -254,6 +286,12 @@ private:
     void bindOutPage(int tab);   // OUTPUT: the plugin's output and playback; PATTERN: the pattern's settings and GRID
     int editSlot() const;        // PTN: the pattern GRID and the PATTERN tab edit
     void holdStep(int step);     // -1 releases
+    // Several held steps (as holding several trig keys on the MD): a knob turn locks them all, an edit window's click
+    // on one of them acts on all, copy / cut / paste / duplicate take them together. primary: the one the knobs show.
+    void holdSteps(uint64_t mask, int primary = -1);
+    uint64_t heldTargets(int step) const { return ((m_heldSet >> step) & 1) ? m_heldSet : (1ull << step); }
+    void cutNotes();
+    void duplicateNotes();
     void stepMenu(int step);
     // Copy / paste / clear at face level (the bar's modifier clicks, the keys): a page (all tracks), the track, the
     // pattern; double. Each says what it did in the bar for a moment.
@@ -284,6 +322,23 @@ private:
     int m_markMode = 0;                      // GRID's edit window: 0 trigs, 1 accent, 2 slide, 3 swing, (EXTRAS) 4 condition, 5 micro, 6 retrig
     std::array<int, 3> m_lastExtra{11, 6, mnm::mddump::makeRetrig(3, 1)};   // what a click sets: 50%, +6/24, 1/64
     bool m_fillLatch = false;                // Shift+F: FILL stays on
+    // GENERATE (E): one run of the window on a track is one undo step, every change made again from the track as it
+    // was when the run began (so hit counts and rotations don't pile up)
+    struct Gen { int session = 0, slot = -1, track = -1, mode = 0, n = 0, rot = 0; juce::int64 seed = 1; mnm::mddump::Pattern base; };
+    Gen m_gen;
+    void genBegin();
+    void genApply(const juce::String& say);
+    int m_laneParam = 0;                     // LANE (L): the track parameter (0..23) of the knob touched last
+    juce::String laneName() const;
+    int laneKitValue() const;
+    void clearLayer(int page);               // Delete in an edit window: only what that window edits, on the page
+    int m_humanise = 4;                      // TIME window, H: micro-timing at random within +- this (24ths of a step)
+    void humanise(bool more);
+    // U: the selected track's SYNTHESIS knobs (Shift: EFFECTS too) a fifth of the way to random values; again: another
+    // roll from the same start. Ctrl+Alt+Z brings the kit before back.
+    struct Mutate { int track = -1; bool fx = false; std::array<int, 16> base{}, last{}; };
+    Mutate m_mut;
+    void mutate(bool withFx);
     void togglePerTrack(int flag);           // A / S / W keys: that mark between all tracks and per track
     // Kit tools (as the MD's UNDO KIT / kit reload / copy, paste, clear machine)
     struct KitUndo { bool valid = false; mnm::mddump::Kit kit; juce::String key, name; };
@@ -296,7 +351,7 @@ private:
     void pasteMachine();
     void clearMachine();
     void shiftTrack(int dir);      // the selected track's trigs (and their locks / marks) one step later / earlier, wrapping
-    void copyNote(int step);       // the held step: its trig, marks and locks
+    void copyNote(int step);       // the held steps: their trigs, marks, locks and extras
     void pasteNote(int step);
     uint16_t m_muteQueue = 0;      // Shift + M: mutes to flip when Shift is let go
     int m_paintStroke = 0;
@@ -318,7 +373,7 @@ private:
     std::vector<UndoStep> m_undo, m_redo;
     int m_lastCoalesce = -1;
     juce::int64 m_lastEditMs = 0;
-    struct Clip { int kind = 0; bool all = false; int track = 0, page = 0; mnm::mddump::Pattern pat; };   // kind 1 page, 2 track, 3 pattern, 4 note (page = its step)
+    struct Clip { int kind = 0; bool all = false; int track = 0, page = 0; mnm::mddump::Pattern pat; uint64_t mask = 0; };   // kind 1 page, 2 track, 3 pattern, 4 notes (page = the first step, mask = the steps)
     Clip m_clip;
     void refreshGrid();
     void bindMasterFx(int fx);
@@ -382,6 +437,7 @@ private:
     MdSeqBar m_seqBar;
     bool m_gridOn = false;
     int m_gridPage = 0, m_heldStep = -1, m_outTab = 0, m_ptnPoll = 0;
+    uint64_t m_heldSet = 0;   // every held step (m_heldStep is one of them, or -1 and this 0)
     bool m_pagePinned = false;
     bool m_browseKits = false;   // Up / Down step kits (the KIT selector was used last), else the track's sounds   // a page dot clicked while playing: GRID stays there (else it follows the playing page)
     std::array<std::string, 128> m_ptnNames;      // "A01", or "A01 --" for an empty slot

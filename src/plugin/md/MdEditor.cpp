@@ -133,8 +133,9 @@ void MdEditor::selectTrack(int t)
         if (m_picker.isOpen()) m_picker.close(false);
         if (m_drop.isVisible()) m_drop.close();
     }
-    if (t != m_track) m_heldStep = -1;
+    if (t != m_track) { m_heldStep = -1; m_heldSet = 0; }
     m_track = t;
+    if (m_markMode == 7) genBegin();   // GENERATE: a new run on this track
     m_keys.setSelected(t);
     bindTrackPages();
     refreshGrid();
@@ -148,7 +149,7 @@ int MdEditor::editSlot() const
 void MdEditor::bindTrackPage(one::KnobPage& page, const spec::Param* params, std::function<juce::String(int)> id, std::function<int(int)> mdParam)
 {
     if (m_heldStep < 0) { page.bind(params, id); return; }
-    const int t = m_track, step = m_heldStep, slot = editSlot();
+    const int t = m_track, step = m_heldStep, slot = editSlot();   // (the first held step: the others take its edits)
     auto paramValue = [this, id](int k) {
         if (auto* a = m_proc.apvts.getParameter(id(k))) return int(std::lround(a->convertFrom0to1(a->getValue())));
         return 0;
@@ -169,12 +170,17 @@ void MdEditor::bindTrackPage(one::KnobPage& page, const spec::Param* params, std
                 if (auto* a = m_proc.apvts.getParameter(id(k))) a->setValueNotifyingHost(a->convertTo0to1(float(v)));
                 return;
             }
-            doEdit(slot, "lock", [&](mnm::mddump::Pattern& pat) { pat.trigs[t] |= 1ull << step; pat.setLock(t, p, step, v); }, 1000 + 24 * step + p);
+            bool full = false;
+            doEdit(slot, "lock", [&](mnm::mddump::Pattern& pat) {
+                for (int s = 0; s < 64; ++s)
+                    if ((m_heldSet >> s) & 1) { pat.trigs[t] |= 1ull << s; if (!pat.setLock(t, p, s, v)) full = true; }
+            }, 1000 + 24 * step + p);
+            if (full) flash("LOCKFULL");   // all 64 lock rows are in use
             refreshGrid();
         },
         [this, t, step, slot, mdParam](int k) {   // a double-click: that parameter's lock goes (the knob shows the track's value)
             const int p = mdParam(k);
-            if (p >= 0) doEdit(slot, "clear lock", [&](mnm::mddump::Pattern& pat) { pat.clearLock(t, p, step); });
+            if (p >= 0) doEdit(slot, "clear lock", [&](mnm::mddump::Pattern& pat) { for (int s = 0; s < 64; ++s) if ((m_heldSet >> s) & 1) pat.clearLock(t, p, s); });
             refreshGrid();
         },
         [this, t, step, slot, mdParam](int k) {   // locked on this step: the value box inverted
@@ -225,7 +231,7 @@ void MdEditor::bindOutPage(int tab)
             if (k == 6) { m_gridPage = v; refreshGrid(); return; }
             if (k == 7) {   // EXTRAS on / off (off: back to the trigs)
                 if (auto* a = m_proc.apvts.getParameter(extrasId())) { a->beginChangeGesture(); a->setValueNotifyingHost(v ? 1.0f : 0.0f); a->endChangeGesture(); }
-                if (!v && m_markMode >= 4) m_markMode = 0;
+                if (!v && m_markMode >= 4 && m_markMode <= 6) m_markMode = 0;
                 flash(v ? "EXTRAS: C T R" : "EXTRAS OFF");
                 return;
             }
@@ -353,19 +359,26 @@ void MdEditor::refreshGrid()
         m_gridPage = juce::jlimit(0, (g.length - 1) / 16, m_gridPage);
         g.page = m_gridPage;
         g.held = m_heldStep;
+        g.heldSet = m_heldSet;
         if (p) {
             g.trigs = p->trigs[t];
             g.accent = p->accentEditAll ? p->accent : p->accentPerTrack[t];
             g.slide = p->slideEditAll ? p->slide : p->slidePerTrack[t];
             g.swing = p->swingEditAll ? p->swing : p->swingPerTrack[t];
             for (int s = 0; s < 64; ++s) { g.cond[size_t(s)] = p->cond[t][s]; g.micro[size_t(s)] = p->micro[t][s]; g.retrig[size_t(s)] = p->retrig[t][s]; }
+            g.trackLen = m_proc.extrasOn() && p->trackLen[t] > 0 && p->trackLen[t] < g.length ? int(p->trackLen[t]) : 0;
+            const int laneRow = p->lockRow(t, m_laneParam);
+            for (int s = 0; s < 64; ++s) g.lane[size_t(s)] = int16_t(laneRow >= 0 && p->locks[laneRow][s] <= 127 ? p->locks[laneRow][s] : -1);
             for (int q = 0; q < 24; ++q) {
                 const int row = p->lockRow(t, q);
                 if (row < 0) continue;
                 for (int s = 0; s < 64; ++s) if (p->locks[row][s] <= 127) g.locks |= 1ull << s;
             }
         }
+        if (!p) g.lane.fill(-1);
+        g.laneKit = laneKitValue();
         if (m_proc.seqPattern() == slot) g.play = m_proc.seqStep();
+        if (g.play >= 0 && g.trackLen > 0 && m_proc.seqStepIndex() >= 0) g.play = int(m_proc.seqStepIndex() % g.trackLen);   // the track's own loop
     }
     m_keys.setGrid(g);
 }
@@ -535,6 +548,13 @@ void MdEditor::mouseDown(const juce::MouseEvent& e)
     auto* c = e.eventComponent;
     if (m_drop.isVisible() && c != &m_drop && !m_drop.isParentOf(c) && c != &m_strip) m_drop.close();
     if (m_picker.isOpen() && c != &m_picker && !m_picker.isParentOf(c) && c != &m_machineBlock) m_picker.close();
+    int page = 0;   // a track knob touched: the parameter LANE shows
+    for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) {
+        const int k = pg->cellIndexOf(c);
+        const int q = k < 0 ? -1 : page == 0 ? k : page == 1 ? 8 + k : page == 2 ? (k < 5 ? 16 + k : -1) : (k >= 5 ? 16 + k : -1);
+        if (q >= 0 && q != m_laneParam) { m_laneParam = q; if (m_markMode == 8) flash(laneName()); else refreshGrid(); }
+        ++page;
+    }
 }
 
 void MdEditor::timerCallback()
@@ -563,7 +583,7 @@ void MdEditor::timerCallback()
     }
     {   // EXTRAS: FILL while F is held (Shift+F latches it); off: no extras windows, no fill
         const bool on = m_proc.extrasOn();
-        if (!on) { m_fillLatch = false; if (m_markMode >= 4) m_markMode = 0; }
+        if (!on) { m_fillLatch = false; if (m_markMode >= 4 && m_markMode <= 6) m_markMode = 0; }
         const bool held = on && hasKeyboardFocus(true) && juce::KeyPress::isKeyCurrentlyDown('F') && !juce::ModifierKeys::currentModifiers.isAnyModifierKeyDown();
         m_proc.setFill(on && (held || m_fillLatch));
     }

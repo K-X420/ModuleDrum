@@ -64,6 +64,7 @@ public:
     void setValuesSource(int k, std::function<const char* const*()> fn) { m_valuesFn[size_t(k)] = std::move(fn); }
     void setIconSource(int k, std::function<const spec::Bitmap*()> fn) { m_iconFn[size_t(k)] = std::move(fn); }
     int cellValue(int k) const { return int(std::lround(m_cells[size_t(k)].getValue())); }
+    int cellIndexOf(const juce::Component* c) const { for (int k = 0; k < 8; ++k) if (c == &m_cells[size_t(k)]) return k; return -1; }   // which knob (-1: not one)
     // Binds the eight cells to parameters; the descriptors are copied (the SYN page changes with the machine).
     void bind(const spec::Param* params8, const std::function<juce::String(int)>& paramId);
     // Binds the cells to values that are not parameters (MD pattern settings, a held step's locks): get(k) gives the

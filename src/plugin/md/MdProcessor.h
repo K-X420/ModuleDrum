@@ -192,6 +192,7 @@ public:
     void editSong(int slot, const std::function<void(mnm::mddump::Song&)>& fn);
     void setBankSong(int slot, std::shared_ptr<const mnm::mddump::Song> s);
     int seqStep() const { return m_seqStepUi.load(); }        // the playing step, -1 when not playing
+    int64_t seqStepIndex() const { return m_seqStepIndexUi.load(); }   // the steps played since the pattern started (-1: none)
     // A pattern chain (as the MD's BANK + TRIG keys): PATTERN mode plays its patterns in turn, a pass each, looping;
     // choosing a pattern another way ends it
     void setChain(const std::vector<int>& slots);
@@ -412,6 +413,7 @@ private:
     std::atomic<int> m_seqKitSlot{-1};                             // the bank's kit that is loaded (-1 = another)
     std::atomic<int> m_seqKitRequest{-1};
     std::atomic<int> m_seqStepUi{-1}, m_seqLenUi{16}, m_seqPatternUi{-1};
+    std::atomic<int64_t> m_seqStepIndexUi{-1};
     bool m_hostPlaying = false;
     double m_hostPpq = 0, m_seqBpm = 120.0;
     std::atomic<bool> m_intPlay{false}, m_seqPlayingUi{false}, m_hostPlayingUi{false};

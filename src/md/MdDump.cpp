@@ -172,6 +172,7 @@ bool Pattern::hasExtras() const
 {
     for (int t = 0; t < kTracks; ++t)
         for (int s = 0; s < 64; ++s) if (cond[t][s] || micro[t][s] || retrig[t][s]) return true;
+    for (int t = 0; t < kTracks; ++t) if (trackLen[t]) return true;
     return false;
 }
 
@@ -483,10 +484,16 @@ bool isPatternExtras(const uint8_t* m, size_t n)
 std::vector<uint8_t> encodePatternExtras(const Pattern& p)
 {
     std::vector<uint8_t> out;
+    const std::vector<uint8_t> head = {0xF0, 0x7D, 'M', 'N', 'X', 1, uint8_t(p.position & 0x7F)};
+    for (int t = 0; t < kTracks; ++t)
+        if (p.trackLen[t]) {
+            if (out.empty()) out = head;
+            out.insert(out.end(), {uint8_t(0x40 | t), uint8_t(p.trackLen[t] & 0x7F), 0, 64, 0});
+        }
     for (int t = 0; t < kTracks; ++t)
         for (int s = 0; s < 64; ++s)
             if (p.cond[t][s] || p.micro[t][s] || p.retrig[t][s]) {
-                if (out.empty()) out = {0xF0, 0x7D, 'M', 'N', 'X', 1, uint8_t(p.position & 0x7F)};
+                if (out.empty()) out = head;
                 const int m = std::clamp(int(p.micro[t][s]), -23, 23) + 64;
                 out.insert(out.end(), {uint8_t(t), uint8_t(s), uint8_t(p.cond[t][s] & 0x7F), uint8_t(m), uint8_t(p.retrig[t][s] & 0x7F)});
             }
@@ -499,8 +506,10 @@ bool decodePatternExtras(const uint8_t* m, size_t n, int& position, Pattern& p)
     if (!isPatternExtras(m, n) || m[5] != 1 || (n - 8) % 5 != 0) return false;
     position = m[6];
     for (int t = 0; t < kTracks; ++t) for (int s = 0; s < 64; ++s) p.clearStepExtras(t, s);
+    std::memset(p.trackLen, 0, sizeof(p.trackLen));
     for (size_t i = 7; i + 5 <= n - 1; i += 5) {
         const int t = m[i], s = m[i + 1];
+        if (t >= 0x40 && t < 0x40 + kTracks) { p.trackLen[t - 0x40] = uint8_t(s <= 64 ? s : 0); continue; }
         if (t >= kTracks || s >= 64) continue;
         p.cond[t][s] = m[i + 2] < kConditions ? m[i + 2] : 0;
         p.micro[t][s] = int8_t(std::clamp(int(m[i + 3]) - 64, -23, 23));
@@ -563,6 +572,7 @@ Dump parseDump(const uint8_t* data, size_t size, const std::string& filename)
                 std::memcpy(it->cond, probe.cond, sizeof(probe.cond));
                 std::memcpy(it->micro, probe.micro, sizeof(probe.micro));
                 std::memcpy(it->retrig, probe.retrig, sizeof(probe.retrig));
+                std::memcpy(it->trackLen, probe.trackLen, sizeof(probe.trackLen));
                 break;
             }
     }

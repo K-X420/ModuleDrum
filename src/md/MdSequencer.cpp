@@ -32,11 +32,12 @@ int PatternPlayer::lock(int track, int param, int step) const
     return v <= 127 ? v : -1;
 }
 
-SeqTrig PatternPlayer::trigAt(int64_t stepIndex, int t) const
+SeqTrig PatternPlayer::trigAt(int64_t stepIndex, int t, bool extras) const
 {
     SeqTrig e;
+    const int span = spanOf(t, extras);
     e.stepIndex = stepIndex;
-    e.step = stepOf(stepIndex);
+    e.step = stepOf(stepIndex, t, extras);
     e.track = t;
     e.clock = double(stepIndex) * m_step + (swung(t, e.step) ? m_swing : 0.0);
     e.accent = accented(t, e.step);
@@ -45,9 +46,9 @@ SeqTrig PatternPlayer::trigAt(int64_t stepIndex, int t) const
     for (int q = 0; q < 24; ++q) e.locks[size_t(q)] = int16_t(lock(t, q, e.step));
     if (slid(t, e.step)) {
         // the track's next trig: steps on (wrapping in the range; itself when it is the only one)
-        auto after = [&](int s) { return s + 1 >= m_start + m_span ? m_start : s + 1; };
+        auto after = [&](int s) { return s + 1 >= m_start + span ? m_start : s + 1; };
         int n = 1, next = after(e.step);
-        while (!hasTrig(t, next) && n < m_span) { ++n; next = after(next); }
+        while (!hasTrig(t, next) && n < span) { ++n; next = after(next); }
         int32_t clocks = n * m_step;
         const bool a = swung(t, e.step), b = swung(t, next);
         if (a != b) clocks += a ? -m_swingWhole : m_swingWhole;
@@ -73,11 +74,11 @@ bool refersBack(int c) { return c == mddump::kCondPre || c == mddump::kCondNotPr
 
 bool PatternPlayer::plainCondition(int64_t k, int t, const TrigContext& ctx) const
 {
-    const int c = m_p.cond[t][stepOf(k)];
+    const int c = m_p.cond[t][stepOf(k, t, true)];
     if (c == 0) return true;
     if (const int pct = mddump::conditionPercent(c); pct > 0)
         return int(mix(ctx.seed ^ mix(uint32_t(k) * 16u + uint32_t(t) + 0x9E3779B9u)) % 100u) < pct;
-    const int64_t pass = k / m_span;
+    const int64_t pass = k / spanOf(t, true);   // the track's own passes
     switch (c) {
         case mddump::kCondFill: return ctx.fill;
         case mddump::kCondNotFill: return !ctx.fill;
@@ -95,7 +96,7 @@ bool PatternPlayer::lastCondition(int64_t k, int t, bool inclusive, const TrigCo
     if (t < 0 || t > 15) return false;
     const int64_t stop = std::max<int64_t>(0, k - 64);
     for (int64_t j = inclusive ? k : k - 1; j >= stop; --j) {
-        const int s = stepOf(j), c = m_p.cond[t][s];
+        const int s = stepOf(j, t, true), c = m_p.cond[t][s];
         if (hasTrig(t, s) && c != 0 && !refersBack(c)) return plainCondition(j, t, ctx);
     }
     return false;
@@ -103,7 +104,7 @@ bool PatternPlayer::lastCondition(int64_t k, int t, bool inclusive, const TrigCo
 
 bool PatternPlayer::conditionPlays(int64_t k, int t, const TrigContext& ctx) const
 {
-    const int c = m_p.cond[t][stepOf(k)];
+    const int c = m_p.cond[t][stepOf(k, t, true)];
     switch (c) {
         case mddump::kCondPre: return lastCondition(k, t, false, ctx);
         case mddump::kCondNotPre: return !lastCondition(k, t, false, ctx);
@@ -121,8 +122,8 @@ void PatternPlayer::trigs(double from, double to, std::vector<SeqTrig>& out, int
     const double reach = m_swing + (ctx.extras ? m_step * 8.0 + m_step : 0.0);
     int64_t k = std::max<int64_t>(0, int64_t(std::floor((from - reach) / m_step)));
     for (; double(k) * m_step < to + (ctx.extras ? m_step : 0.0) && (maxSteps < 0 || k < maxSteps); ++k) {
-        const int step = stepOf(k);
         for (int t = 0; t < 16; ++t) {
+            const int step = stepOf(k, t, ctx.extras);
             if (!hasTrig(t, step)) continue;
             double c = double(k) * m_step + (swung(t, step) ? m_swing : 0.0);
             if (!ctx.extras) {
@@ -137,7 +138,7 @@ void PatternPlayer::trigs(double from, double to, std::vector<SeqTrig>& out, int
             const double last = c + gap * std::max(0, hits - 1);
             if (last < from || c >= to) continue;
             if (!conditionPlays(k, t, ctx)) continue;
-            const SeqTrig e = trigAt(k, t);
+            const SeqTrig e = trigAt(k, t, true);
             for (int h = 0; h < std::max(1, hits); ++h) {
                 const double at = c + gap * h;
                 if (at < from || at >= to) continue;

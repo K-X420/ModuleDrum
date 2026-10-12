@@ -480,8 +480,10 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
         int64_t k = int64_t(std::floor((c1 - m_seg.origin) / m_seg.player.clocksPerStep()));
         if (m_seg.steps >= 0 && k >= m_seg.steps) k = m_seg.steps - 1;
         m_seqStepUi.store(m_seg.player.stepOf(k));
+        m_seqStepIndexUi.store(k);
     } else {
         m_seqStepUi.store(-1);
+        m_seqStepIndexUi.store(-1);
     }
 }
 

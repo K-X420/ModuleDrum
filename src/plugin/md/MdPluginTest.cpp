@@ -85,6 +85,7 @@ int main(int argc, char** argv)
     if (const char* v = std::getenv("MD_SEQ_TEST")) return test::mdSeqTest(env, v);
     if (const char* v = std::getenv("MD_GROUP_TEST")) return test::mdGroupTest(env, v);
     if (const char* v = std::getenv("MD_XTRA_TEST")) return test::mdXtraTest(env, v);
+    if (const char* v = std::getenv("MD_TOOLS_TEST")) return test::mdToolsTest(env, v);
     if (const char* v = std::getenv("MD_BENCH")) return test::mdBench(env, v);
     if (const char* v = std::getenv("MD_INPUT_TEST")) return test::mdInputTest(env, v);
     bool kitLoaded = false;
@@ -391,6 +392,17 @@ int main(int argc, char** argv)
                     for (int k = 0; k < s / 4; ++k) med->devExtraWheel(s, kind, kind == 1 ? -5 : 3, false);
                 }
                 med->devMarkMode(kind + 4);
+                med->refresh();
+            }
+            if (std::getenv("MD_UI_LANE")) {   // dev: the LANE window with a ramp, the track 12 steps long, two steps held
+                if (auto* a = proc.apvts.getParameter(extrasId())) a->setValueNotifyingHost(1.0f);
+                med->showGrid(-1);
+                for (int s : {0, 2, 3, 4, 6, 8, 10, 11}) med->devStep(s);
+                med->devLaneParam(0);
+                med->devLaneRamp(0, 20, 8, 120);
+                med->devTrackLen(11);
+                if (std::strcmp(std::getenv("MD_UI_LANE"), "hold") == 0) { med->devHold(2); med->devHoldAdd(6); }
+                else med->devMarkMode(8);
                 med->refresh();
             }
             if (std::getenv("MD_UI_KITS")) med->showKitList();
