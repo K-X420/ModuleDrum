@@ -166,15 +166,18 @@ Download the latest release from **[Releases](https://github.com/K-X420/ModuleDr
 
 ## Installing a release
 
-Pre-built downloads for macOS, Windows and Linux are on the **[Releases](https://github.com/K-X420/ModuleDrum/releases)** page.
+Pre-built zips for macOS, Windows and Linux are on the **[Releases](https://github.com/K-X420/ModuleDrum/releases)** page.
+Each zip has a `VST3` folder (ModuleDrum plus the Monomodule One, Six and FX plugins), a `Standalone` folder, a
+`Library` folder with the Library app, and on macOS an `AU` folder and the installer described above. There is no
+Windows or Linux installer; copy the files yourself:
 
 | Platform | Plugins | Library app |
 |---|---|---|
-| macOS 12+ (Apple Silicon and Intel) | Run the installer. It installs the AU and VST3 plugins in `/Library/Audio/Plug-Ins/`. | `/Applications/Monomodule Library.app` |
-| Windows 10+ (x64) | Run the installer. It installs the VST3 plugins in `C:\Program Files\Common Files\VST3\`. Or use the zip and copy the `.vst3` folders there yourself. | `C:\Program Files\Shnolk\Monomodule\Monomodule Library.exe` |
-| Linux (x64) | Copy the `.vst3` folders to `~/.vst3/` | `~/.local/bin/Monomodule Library` |
+| macOS 12+ (Apple Silicon and Intel) | Run **Install ModuleDrum.command** (see above). | Installed to `~/Applications` by the same script. |
+| Windows 10+ (x64) | Copy the `.vst3` folders from `VST3` to `C:\Program Files\Common Files\VST3\`. | Copy the contents of `Library` to `%LOCALAPPDATA%\Programs\Shnolk\Monomodule\` (or `C:\Program Files\Shnolk\Monomodule\`). |
+| Linux (x64) | Copy the `.vst3` folders from `VST3` to `~/.vst3/`. | Copy `Monomodule Library` to `~/.local/bin/`. |
 
-The plugin's library panel opens the Library app from these locations.
+The plugin's library panel opens the Library app from these locations. The plugins work without it.
 
 ## Building from source
 

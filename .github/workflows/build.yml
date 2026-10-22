@@ -1,6 +1,5 @@
 # Builds and tests ModuleDrum and Monomodule on macOS, Linux and Windows. On a version tag (v1.2.3) it also creates a draft
-# GitHub release with the Linux and Windows zips attached; the macOS and Windows installers are built separately
-# and added to the draft by hand before it is published.
+# GitHub release with the macOS, Linux and Windows zips attached, to be published by hand.
 name: build
 
 # Builds run on demand (the Actions tab, or `gh workflow run build.yml --ref <branch>`) and for version tags; pushes and
