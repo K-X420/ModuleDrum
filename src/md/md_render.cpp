@@ -225,7 +225,7 @@ int main(int argc, char** argv)
             // "al", a CTR-AL on T1's VOL) whose trigs lock GAIN 0 at step 5 and 127 at step 9: the level by quarter bar
             const bool al = argc > 3 && std::strcmp(argv[3], "al") == 0;
             mnm::mddump::Kit kit;
-            for (int tr = 0; tr < 16; ++tr) { kit.trigGroups[tr] = 127; kit.muteGroups[tr] = 127; kit.lfos[tr][0] = uint8_t(tr); kit.levels[tr] = 100; }
+            for (int tr = 0; tr < 16; ++tr) { kit.trigGroups[tr] = mnm::mddump::kGroupOff; kit.muteGroups[tr] = mnm::mddump::kGroupOff; kit.lfos[tr][0] = uint8_t(tr); kit.levels[tr] = 100; }
             kit.models[0] = 1;   // GND-SN, long decay, filter open
             kit.params[0][0] = 64; kit.params[0][1] = 127; kit.params[0][10] = 64; kit.params[0][13] = 127; kit.params[0][17] = 100; kit.params[0][18] = 64;
             kit.levels[0] = 127;

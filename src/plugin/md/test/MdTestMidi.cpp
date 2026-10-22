@@ -100,6 +100,11 @@ int mdMidiTest(TestEnv& env, const char* value)
             const bool okG = !d.globals.empty() && d.globals[0].trackOfNote(36) == 0 && d.globals[0].trackOfNote(62) == 15 && d.globals[0].baseChannel == 0 && d.globals[0].tempo == 2400;
             const auto fromG = d.globals.empty() ? ms : MdProcessor::fromGlobal(d.globals[0], ms);
             check(okG && fromG.noteTrack[36] == 0 && fromG.baseChannel == 0, "the factory pack global: notes 36..62 = T1..T16, channel 1, 100 BPM; loaded as settings");
+            if (!d.globals.empty()) {
+                const auto& g = d.globals[0];
+                check(g.localOn && g.inputTrack[0] == 16 && g.inputTrack[1] == 16 && g.inputGate[0] == 1 && g.inputSense[1] == 0
+                      && g.inputMin[0] == 0 && g.inputMax[1] == 127, "the factory global's LOCAL and input trigger settings (inputs off)");
+            }
             if (!d.globals.empty()) { int pn = 0; for (int i = 0; i < 128; ++i) if (d.globals[0].keyMap[i] >= 16) ++pn; std::printf("  (factory global: pattern-note mode %d, %d notes on patterns / start / stop, PRG CHANGE byte %d)\n", int(d.globals[0].trigMode), pn, int(d.globals[0].programChange)); } if (std::getenv("MD_SWINGMASK_DUMP")) { std::map<std::string,int> c; for (const auto& pt : d.patterns) { char b[64]; std::snprintf(b, sizeof b, "%016llX all=%u", (unsigned long long) pt.swing, unsigned(pt.swingEditAll)); ++c[b]; } for (const auto& [k, n] : c) std::printf("swing mask %s x%d\n", k.c_str(), n); } if (std::getenv("MD_KEYMAP_DUMP") && !d.globals.empty()) { for (int i = 0; i < 128; ++i) std::printf("%d:%d ", i, int(d.globals[0].keyMap[i])); std::printf("\n"); }
         }
     }

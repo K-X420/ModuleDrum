@@ -40,7 +40,7 @@ int mdSeqTest(TestEnv& env, const char* value)
     for (int k = 0; k < 2; ++k) {
         mnm::mddump::Kit kit;
         kit.position = k;
-        for (int tr = 0; tr < 16; ++tr) { kit.trigGroups[tr] = 127; kit.muteGroups[tr] = 127; kit.lfos[tr][0] = uint8_t(tr); kit.levels[tr] = 100; kit.params[tr][17] = 100; }
+        for (int tr = 0; tr < 16; ++tr) { kit.trigGroups[tr] = kGroupOff; kit.muteGroups[tr] = kGroupOff; kit.lfos[tr][0] = uint8_t(tr); kit.levels[tr] = 100; kit.params[tr][17] = 100; }
         for (int tr = 0; tr < 3; ++tr) { kit.models[tr] = 1; kit.params[tr][0] = uint8_t(k == 0 ? 64 : 30); kit.params[tr][1] = 60; }
         const uint8_t rev[8] = {0, 0, 64, 64, 0, 127, 127, 127}, del[8] = {24, 0, 0, 32, 0, 127, 0, 127}, dyn[8] = {0, 64, 127, 0, 0, 0, 64, 0};
         std::memcpy(kit.reverb, rev, 8); std::memcpy(kit.delay, del, 8); std::memset(kit.eq, 64, 8); std::memcpy(kit.dynamics, dyn, 8);
@@ -409,7 +409,7 @@ int mdGroupTest(TestEnv& env, const char* value)
         const bool loaded = std::lround(p.apvts.getRawParameterValue(trigGroupId(4))->load()) == 7 && std::lround(p.apvts.getRawParameterValue(muteGroupId(8))->load()) == 10;
         if (auto* q = p.apvts.getParameter(muteGroupId(2))) q->setValueNotifyingHost(q->convertTo0to1(16.0f));
         const auto cap = p.captureMdKit();
-        check(loaded && cap.trigGroups[4] == 6 && cap.muteGroups[8] == 9 && cap.muteGroups[2] == 15 && cap.trigGroups[0] == 127 && p.kitModified(),
+        check(loaded && cap.trigGroups[4] == 6 && cap.muteGroups[8] == 9 && cap.muteGroups[2] == 15 && cap.trigGroups[0] == kGroupOff && p.kitModified(),
               "a kit's groups load as T5 TRGG T7 / T9 MUTG T10; an edit (T3 MUTG T16) goes into the saved kit and marks it modified", 0, 0);
         juce::MemoryBlock st; p.getStateInformation(st);
         auto rHeap = std::make_unique<MdProcessor>();

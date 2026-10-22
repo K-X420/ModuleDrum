@@ -284,7 +284,13 @@ bool decodeGlobal(const uint8_t* msg, size_t n, Global& g)
     const uint8_t* r = msg + i;
     g.baseChannel = r[0];
     g.tempo = (r[2] << 7) | r[3];
+    g.extendedMode = r[4] != 0;
     g.flags = r[5];
+    g.localOn = r[6] != 0;
+    for (int i = 0; i < 2; ++i) {   // r[7..16]: each setting as an A, B pair
+        g.inputTrack[i] = r[7 + i]; g.inputGate[i] = r[9 + i]; g.inputSense[i] = r[11 + i];
+        g.inputMin[i] = r[13 + i]; g.inputMax[i] = r[15 + i];
+    }
     g.programChange = r[17];
     g.trigMode = r[18];
     return true;

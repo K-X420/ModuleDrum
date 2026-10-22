@@ -19,7 +19,7 @@ MdProcessor::MdProcessor()
       apvts(*this, nullptr, "PARAMS", createLayout())
 {
     for (int t = 0; t < kTracks; ++t) {   // an empty kit's bytes: no trig / mute groups, every LFO on its own track
-        m_baseKit.trigGroups[t] = 127; m_baseKit.muteGroups[t] = 127; m_baseKit.lfos[t][0] = uint8_t(t);
+        m_baseKit.trigGroups[t] = kGroupOff; m_baseKit.muteGroups[t] = kGroupOff; m_baseKit.lfos[t][0] = uint8_t(t);
     }
     for (int i = 0; i < kNumMachines; ++i) m_idOfIndex[size_t(i)] = kMachines[i].id;
     for (int t = 0; t < kTracks; ++t) {

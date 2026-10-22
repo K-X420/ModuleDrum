@@ -119,7 +119,7 @@ int mdXtraTest(TestEnv& env, const char* value)
         } head;
         dd::Dump d;
         dd::Kit kit;
-        for (int tr = 0; tr < 16; ++tr) { kit.trigGroups[tr] = 127; kit.muteGroups[tr] = 127; kit.levels[tr] = 100; kit.params[tr][17] = 100; }
+        for (int tr = 0; tr < 16; ++tr) { kit.trigGroups[tr] = kGroupOff; kit.muteGroups[tr] = kGroupOff; kit.levels[tr] = 100; kit.params[tr][17] = 100; }
         kit.models[0] = 1; kit.params[0][0] = 64; kit.params[0][1] = 30;
         d.kits.push_back(kit);
         auto x = blankPattern(0, 16);
@@ -189,6 +189,27 @@ int mdXtraTest(TestEnv& env, const char* value)
         setParam(extrasId(), 0.0f);
         med->keyPressed(juce::KeyPress('t'));
         check(med->devMarkModeNow() != 5, "EXTRAS off: T does nothing");
+        ed.reset();
+
+        // ---- a retrig running past a pattern change plays out: 4 hits x 4 steps from the last step of A01, then A02
+        dd::Dump two;
+        two.kits.push_back(kit);
+        auto a = blankPattern(0, 16);
+        a.trigs[0] = uint64_t(1) << 15;
+        a.retrig[0][15] = dd::makeRetrig(3, 4);
+        two.patterns.push_back(a);
+        two.patterns.push_back(blankPattern(1, 16));
+        p.setPatternBank("test2", "XTRA", two, 0);
+        setParam(extrasId(), 1.0f);
+        setParam(patternId(), 0.0f);
+        head.ppq = 100.0;   // a jump: A01 starts over (in step with bars)
+        blocks(int(30 * spc / env.block) + 1);   // (past the retrig of the pass before, wrapping in)
+        p.setTrigLogging(true);
+        setParam(patternId(), 1.0f);   // A02 next, from the end of this pass
+        blocks(int(120 * spc / env.block));
+        int tail = 0;
+        for (const auto& e : p.trigLog()) tail += e.track == 0;
+        check(tail == 16, "a retrig crossing a pattern change plays all its hits (" + juce::String(tail) + " of 16)");
     }
     std::printf(fails ? "XTRA TEST FAILED (%d)\n" : "XTRA TEST OK\n", fails);
     return fails ? 1 : 0;

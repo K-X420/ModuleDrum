@@ -42,7 +42,7 @@ bool legacyKit(const juce::var& v, mnm::mddump::Kit& k)
     if (!params || params->size() != 16 || !lfos || lfos->size() != 16 || !fx || fx->size() != 4) return false;
     for (int t = 0; t < 16; ++t) {
         if (!fill((*params)[t], k.params[t], 24) || !fill((*lfos)[t], k.lfos[t], 36)) return false;
-        k.trigGroups[t] = 127; k.muteGroups[t] = 127;
+        k.trigGroups[t] = mnm::mddump::kGroupOff; k.muteGroups[t] = mnm::mddump::kGroupOff;
     }
     uint8_t* fxs[4] = {k.reverb, k.delay, k.eq, k.dynamics};
     for (int f = 0; f < 4; ++f) if (!fill((*fx)[f], fxs[f], 8)) return false;

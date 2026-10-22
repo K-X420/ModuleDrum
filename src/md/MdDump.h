@@ -17,6 +17,7 @@ namespace mnm::mddump {
 
 constexpr uint8_t kGlobalId = 0x50, kKitId = 0x52, kPatternId = 0x67, kSongId = 0x69;
 constexpr int kTracks = 16, kKitSlots = 64, kPatternSlots = 128, kSongSlots = 32, kGlobalSlots = 8;
+constexpr uint8_t kGroupOff = 0xFF;   // a kit's trig / mute group byte for "none", as the MD writes it (readers take any value >= 16)
 
 // A kit (message 0x52, stock versions 1-4): the 16 tracks' machines and parameters, levels, LFOs, master effects.
 struct Kit {
@@ -29,7 +30,7 @@ struct Kit {
     uint32_t models[kTracks] = {};                     // machine ids (bits beyond the id are flags: 0x200FF is the id)
     uint8_t lfos[kTracks][36] = {};                    // dest track, dest param, shape 1, shape 2, type, 31 bytes of state
     uint8_t reverb[8] = {}, delay[8] = {}, eq[8] = {}, dynamics[8] = {};
-    uint8_t trigGroups[kTracks] = {}, muteGroups[kTracks] = {};   // 127 / 255 = off
+    uint8_t trigGroups[kTracks] = {}, muteGroups[kTracks] = {};   // kGroupOff = none
     int model(int t) const { return int(models[t] & 0xFF); }      // the firmware machine id (0 = GND---)
     bool isEmptySlot() const;                          // no name and every track GND---
 };
@@ -120,6 +121,11 @@ struct Global {
     // flags (the sync settings): 0x01 TEMPO IN external, 0x10 CTRL IN off (set = off), 0x20 TEMPO OUT, 0x40 CTRL OUT
     uint8_t baseChannel = 0, programChange = 0, trigMode = 0, flags = 0;
     bool ctrlIn() const { return (flags & 0x10) == 0; }
+    // Kept as read but not applied by the plugin: EXTENDED MODE, LOCAL (MIDI local control), and the audio inputs'
+    // trigger settings per input (A = 0, B = 1): the track each one triggers (16 = none), gate, sensitivity, and the
+    // levels it maps between (min / max). Factory globals: 16 16, 1 1, 0 0, 0 0, 127 127.
+    bool extendedMode = false, localOn = true;
+    uint8_t inputTrack[2] = {16, 16}, inputGate[2] = {1, 1}, inputSense[2] = {}, inputMin[2] = {}, inputMax[2] = {127, 127};
     int tempo = 120 * 24;
     int trackOfNote(int note) const { return note >= 0 && note < 128 && keyMap[note] < kTracks ? keyMap[note] : -1; }
 };

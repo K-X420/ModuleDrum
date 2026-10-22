@@ -295,7 +295,10 @@ ModuleDrum:
 - MIDI transfer to and from a real Machinedrum (sysex send / receive, clock out) isn't implemented yet. To move
   dumps, use `.syx` files with Elektron's C6 or Transfer tools.
 - The extras (trig conditions, micro-timing, retrigs, a track's own length) are the plugin's own: a real Machinedrum
-  has no room for them, so `.syx` exports leave them out.
+  has no room for them, so `.syx` exports leave them out. Library previews and MIDI clip export also play the
+  plain pattern, without them.
+- From a global, ModuleDrum uses the MIDI settings (key map, channel, sync, program change, pattern notes). The
+  EXTENDED MODE, LOCAL and audio-input trigger settings are kept in the project but not applied.
 - It has not yet been compared side by side with the hardware.
 
 The Monomodule plugins:

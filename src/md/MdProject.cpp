@@ -17,7 +17,7 @@ Kit& ensureKit(Dump& d, int pos)
     if (auto* k = kitSlot(d, pos)) return *k;
     Kit k;
     k.position = pos;
-    for (int t = 0; t < kTracks; ++t) { k.trigGroups[t] = 127; k.muteGroups[t] = 127; k.lfos[t][0] = uint8_t(t); }
+    for (int t = 0; t < kTracks; ++t) { k.trigGroups[t] = kGroupOff; k.muteGroups[t] = kGroupOff; k.lfos[t][0] = uint8_t(t); }
     Message m;
     m.id = kKitId; m.version = k.version; m.revision = k.revision; m.position = pos;
     m.kitIndex = int(d.kits.size());
@@ -103,7 +103,7 @@ void clearKit(Dump& d, int pos)
     if (auto* k = kitSlot(d, pos)) {
         Kit empty;
         empty.position = pos; empty.version = k->version; empty.revision = k->revision;
-        for (int t = 0; t < kTracks; ++t) { empty.trigGroups[t] = 127; empty.muteGroups[t] = 127; empty.lfos[t][0] = uint8_t(t); }
+        for (int t = 0; t < kTracks; ++t) { empty.trigGroups[t] = kGroupOff; empty.muteGroups[t] = kGroupOff; empty.lfos[t][0] = uint8_t(t); }
         *k = empty;
     }
 }

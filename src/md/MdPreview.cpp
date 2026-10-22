@@ -35,7 +35,7 @@ Spec patternPreview(const Kit& kit, const Pattern& p, const Options& opt)
 Spec soundPreview(const mdcatalog::Sound& sound, const Options& opt)
 {
     Spec s;
-    for (int t = 0; t < kTracks; ++t) { s.kit.trigGroups[t] = 127; s.kit.muteGroups[t] = 127; s.kit.lfos[t][0] = uint8_t(t); s.kit.levels[t] = 100; }
+    for (int t = 0; t < kTracks; ++t) { s.kit.trigGroups[t] = kGroupOff; s.kit.muteGroups[t] = kGroupOff; s.kit.lfos[t][0] = uint8_t(t); s.kit.levels[t] = 100; }
     sound.applyTo(s.kit, 0);
     s.kit.levels[0] = 127;
     // the master effects as a fresh ModuleDrum kit has them

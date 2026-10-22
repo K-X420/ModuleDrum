@@ -65,6 +65,9 @@ public:
     int spanOf(int track, bool extras) const { const int l = m_p.trackLen[track]; return extras && l > 0 && l < m_span ? l : m_span; }
     int stepOf(int64_t stepIndex, int track, bool extras) const { return m_start + int(stepIndex % spanOf(track, extras)); }
     double swingClocks() const { return m_swing; }    // the delay of a swung step
+    // How far after its step a trig can still sound: the swing; with the extras also a micro-timing nudge and retrigs
+    // up to 8 steps on. A pattern that ended keeps playing its trigs this long past its end.
+    double tailClocks(bool extras) const { return m_swing + (extras ? m_step * 9.0 : 0.0); }
 
     bool swung(int track, int step) const { return bit(m_p.swingEditAll, m_p.swing, m_p.swingPerTrack[track], step); }
     bool accented(int track, int step) const { return bit(m_p.accentEditAll, m_p.accent, m_p.accentPerTrack[track], step); }

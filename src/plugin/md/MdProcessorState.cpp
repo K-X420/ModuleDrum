@@ -84,7 +84,7 @@ mnm::md::Kit engineKit(const mnm::mddump::Kit& k)
 mnm::mddump::Kit freshKit()   // what an empty kit slot holds: no groups, every LFO on its own track
 {
     mnm::mddump::Kit k;
-    for (int t = 0; t < 16; ++t) { k.trigGroups[t] = 127; k.muteGroups[t] = 127; k.lfos[t][0] = uint8_t(t); }
+    for (int t = 0; t < 16; ++t) { k.trigGroups[t] = kGroupOff; k.muteGroups[t] = kGroupOff; k.lfos[t][0] = uint8_t(t); }
     return k;
 }
 } // namespace
@@ -255,14 +255,14 @@ void MdProcessor::initKit()
         m_kitLfos[size_t(t)][0] = uint8_t(t);
         m_kitLfoPending[size_t(t)].store(true);
         m_sounds[size_t(t)] = {};
-        m_baseKit.trigGroups[t] = 127; m_baseKit.muteGroups[t] = 127;
+        m_baseKit.trigGroups[t] = kGroupOff; m_baseKit.muteGroups[t] = kGroupOff;
         for (const auto& id : {trigGroupId(t), muteGroupId(t)}) if (auto* p = apvts.getParameter(id)) p->setValueNotifyingHost(0.0f);
     }
     for (auto& f : m_machineChanged) f.store(false);
     for (auto& v : m_visited) v.fill(false);
     for (int t = 0; t < kTracks; ++t) m_shadowIdx[size_t(t)] = juce::jlimit(0, kNumMachines - 1, int(std::lround(m_tracks[size_t(t)].machine->load())));
     m_baseKit = {};
-    for (int t = 0; t < kTracks; ++t) { m_baseKit.trigGroups[t] = 127; m_baseKit.muteGroups[t] = 127; m_baseKit.lfos[t][0] = uint8_t(t); }
+    for (int t = 0; t < kTracks; ++t) { m_baseKit.trigGroups[t] = kGroupOff; m_baseKit.muteGroups[t] = kGroupOff; m_baseKit.lfos[t][0] = uint8_t(t); }
     m_kitName.clear(); m_kitKey.clear(); m_kitSnapshot.clear();
     m_snap = true;
     updateHostDisplay(ChangeDetails().withParameterInfoChanged(true));

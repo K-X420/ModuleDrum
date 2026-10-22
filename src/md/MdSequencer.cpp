@@ -118,8 +118,7 @@ void PatternPlayer::trigs(double from, double to, std::vector<SeqTrig>& out, int
 {
     if (to <= from) return;
     const size_t first = out.size();
-    // a step's trigs are at its start, or a swing delay later (extras: a micro-timing nudge, retrigs up to 8 steps on)
-    const double reach = m_swing + (ctx.extras ? m_step * 8.0 + m_step : 0.0);
+    const double reach = tailClocks(ctx.extras);   // a step's trigs: at its start up to this much later
     int64_t k = std::max<int64_t>(0, int64_t(std::floor((from - reach) / m_step)));
     for (; double(k) * m_step < to + (ctx.extras ? m_step : 0.0) && (maxSteps < 0 || k < maxSteps); ++k) {
         for (int t = 0; t < 16; ++t) {

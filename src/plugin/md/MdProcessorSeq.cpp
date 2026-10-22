@@ -425,10 +425,10 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
     m_ptnJump = -1;
     m_seqExpect = c1;
     m_seqPlayingUi.store(true);
-    // the segment that ended last: its swung steps' trigs after its end
+    // the segment that ended last: its trigs after its end (swung steps; with the extras, nudges and retrigs)
     if (m_prevSeg.valid) {
         seqGenerate(m_prevSeg, c0, c1, ratio);
-        if (c0 > m_prevSeg.endClock() + m_prevSeg.player.swingClocks() + 1.0) m_prevSeg.valid = false;
+        if (c0 > m_prevSeg.endClock() + m_prevSeg.player.tailClocks(extrasOn()) + 1.0) m_prevSeg.valid = false;
     }
     for (int guard = 0; guard < 256; ++guard) {
         if (!song) {

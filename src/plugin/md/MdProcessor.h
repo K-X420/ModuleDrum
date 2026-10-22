@@ -377,7 +377,7 @@ private:
     std::atomic<float>* m_seqOn = nullptr;
     std::atomic<float>* m_patternParam = nullptr;
     // What plays: a pattern until another is queued (PATTERN), or a song row's pattern steps x repeats (SONG). The one
-    // that ended last keeps playing its swung steps' trigs that come after its end.
+    // that ended last keeps playing its trigs that come after its end (swing; with the extras, nudges and retrigs).
     struct Segment {
         mnm::md::PatternPlayer player;
         bool valid = false;
