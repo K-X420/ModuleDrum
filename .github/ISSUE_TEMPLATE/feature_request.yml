@@ -1,0 +1,11 @@
+name: Feature request
+description: Something you'd like ModuleDrum to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you'd like
+      description: What you want to do and how it would fit your workflow. If a real Machinedrum (or another Elektron box) does it, say how.
+    validations:
+      required: true

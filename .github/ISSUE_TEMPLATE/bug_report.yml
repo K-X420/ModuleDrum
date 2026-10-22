@@ -1,0 +1,47 @@
+name: Bug report
+description: Something sounds, looks or behaves wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. Steps to repeat it help most.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release you installed (the zip's name), or the commit you built.
+      placeholder: ModuleDrum-1.3.1-windows-x64
+    validations:
+      required: true
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Plugin
+      options: [ModuleDrum, Monomodule One, Monomodule Six, Monomodule FX, Library app]
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host and format
+      description: The DAW and its version, and VST3 / AU / standalone.
+      placeholder: Ableton Live 12.1, VST3
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Computer
+      description: OS version and CPU.
+      placeholder: macOS 14.5, M2
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Crash logs, screenshots, a .syx or a short project that shows it. Don't attach the Elektron OS files.
