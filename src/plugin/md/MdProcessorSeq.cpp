@@ -226,6 +226,8 @@ void MdProcessor::seqStart(Segment& seg, int slot, int start, int end, int64_t s
     m_seqLenUi.store(seg.player.length());
     for (int t = 0; t < kTracks; ++t) m_seqTrigsUi[size_t(t)].store(pat.trigs[t]);
     if (!real || !extendedMode()) return;   // no kit to bring in (CLASSIC: patterns have no kit)
+    if (slot == m_kitOwner.load()) return;  // the kit loaded on this pattern stays
+    m_kitOwner.store(-1);
     const int k = pat.kit;
     if (k < 0 || k >= 64 || !bank->hasKit[size_t(k)] || k == m_seqKitSlot.load()) return;
     m_seqKitSlot.store(k);

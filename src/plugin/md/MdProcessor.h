@@ -412,6 +412,9 @@ private:
     std::shared_ptr<const SeqBank> m_overrideBank;
     std::atomic<int> m_seqKitSlot{-1};                             // the bank's kit that is loaded (-1 = another)
     std::atomic<int> m_seqKitRequest{-1};
+    // The pattern the loaded kit was loaded on: starting that pattern again (play, a restart, a new bank) keeps the
+    // kit, as on the unit, where only a change to another pattern brings that pattern's kit. -1 = none.
+    std::atomic<int> m_kitOwner{-1};
     std::atomic<int> m_seqStepUi{-1}, m_seqLenUi{16}, m_seqPatternUi{-1};
     std::atomic<int64_t> m_seqStepIndexUi{-1};
     bool m_hostPlaying = false;

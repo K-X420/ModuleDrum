@@ -163,6 +163,21 @@ int mdSeqTest(TestEnv& env, const char* value)
         check(t1.size() == 1 && std::abs(t1[0] - 168) < 0.01 && t3.size() == 1 && std::abs(t3[0] - 192) < 0.01,
               "a locate to clock 150 picks the song up there: T1 at 168, A02 at 192");
     }
+    {   // a kit picked from the project's list while A01 (kit 1 of the project) is the pattern: it stays (issue #2)
+        setParam(seqModeId(), 0.0f); setParam(patternId(), 0.0f);
+        head.ppq = 0; run(int(100 * spc / block));
+        p.loadMdKit("kitB", d.kits[1], "KIT B");   // as MdEditor::loadKit: the kit, then its project as the bank
+        p.setPatternBank("test", "SEQ TEST", d, 1);
+        run(int(100 * spc / block));
+        check(base.back() == 30 && p.kitName() == "KIT B", "the picked kit stays while A01 plays on (PTCH " + juce::String(base.back()) + ", '" + p.kitName() + "')");
+        head.playing = false; run(3);
+        head.playing = true; head.ppq = 0; run(int(200 * spc / block));
+        check(base.back() == 30 && p.kitName() == "KIT B", "and after a stop and play from the start (PTCH " + juce::String(base.back()) + ")");
+        setParam(patternId(), 1.0f); run(int(200 * spc / block));
+        setParam(patternId(), 0.0f); run(int(200 * spc / block));
+        const int ptch = p.captureMdKit().params[0][0];
+        check(p.seqPattern() == 0 && ptch == 64, "a change to A02 and back to A01 brings A01's kit (PTCH " + juce::String(ptch) + ")");
+    }
     if (argc > 3) {   // the editor mid-pattern, the keys showing the steps (T1 selected)
         setParam(seqModeId(), 0.0f); setParam(patternId(), 0.0f);
         head.ppq = 0; run(2);

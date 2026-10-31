@@ -146,6 +146,8 @@ int MdProcessor::loadMdKit(const juce::String& key, const mnm::mddump::Kit& kit,
     const int emptied = applyKit(engineKit(kit));
     setGroupsFromKit(kit);
     setLoadedKit(key, name);
+    const int on = seqPattern();   // the kit now belongs to the playing (or selected) pattern
+    m_kitOwner.store(on >= 0 ? on : juce::jlimit(0, 127, int(std::lround(m_patternParam->load()))));
     for (int t = 0; t < kTracks; ++t)   // each track's sound is now the kit's
         if (!m_locked[size_t(t)].load()) setLoadedSound(t, juce::String(mnm::mdcatalog::Catalog::soundHash(mnm::mdcatalog::Sound::fromKit(kit, t))), {});
     return emptied;
