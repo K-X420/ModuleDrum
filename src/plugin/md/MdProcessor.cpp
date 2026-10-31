@@ -440,6 +440,7 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
         const auto* ok = m_kitOverride.load();
         const int id = ok ? overrideMachine(*ok, t) : machineIdOf(t);
         const int pos = juce::jlimit(0, juce::jmax(0, n - 1), int(std::lround(enginePos / ratio)));
+        if (s && s->lockOnly) { trigLocks(t, s, pos); return; }   // a trigless lock: the locks, no voice
         if (!(s && s->retrig)) trigLocks(t, s, pos);   // (a retrig's later hits: the locks are set already)
         if (isMidMachine(id)) { midTrig(t, pos); m_engine->groupTrig(t); }
         else if (isCtrMachine(id)) { m_engine->groupTrig(t); ctrTrig = true; }
@@ -473,7 +474,7 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
             // (MainOS 0x21D842: the turned parameters are locked onto the next step reached if the track trigs there,
             // and forgotten at every step either way)
             const int64_t at = m_clock + int64_t(pt.enginePos / ratio);
-            const int64_t step = int64_t(std::ceil(m_seg.player.clocksPerStep() / juce::jmax(1e-12, m_seqCps))) + 1;
+            const int64_t step = int64_t(std::ceil(m_seg.player.trackStep(pt.track, extrasOn()) / juce::jmax(1e-12, m_seqCps))) + 1;
             for (int q = 0; q < 24; ++q) {
                 const int64_t ago = at - m_recTouched[size_t(pt.track)][size_t(q)];
                 if (ago >= 0 && ago <= step)

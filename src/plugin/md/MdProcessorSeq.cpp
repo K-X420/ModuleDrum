@@ -168,9 +168,11 @@ void MdProcessor::trigLocks(int t, const mnm::md::SeqTrig* s, int pos)
     const bool voice = !isMidMachine(id) && !isCtrMachine(id);
     auto& locks = m_lockVal[size_t(t)];
     const bool ext = extendedMode();   // CLASSIC: the pattern's locks (and so its slides) are not played
+    const bool only = s && s->lockOnly;
     for (int q = 0; q < 24; ++q) {
-        m_glide[size_t(t)][size_t(q)].active = false;
         const int v = s && ext ? s->locks[size_t(q)] : -1;
+        if (only && v < 0) continue;
+        m_glide[size_t(t)][size_t(q)].active = false;
         if (v >= 0) {
             if (ccOut && locks[size_t(q)] != v) sendCc(t, q, v, pos);
             locks[size_t(q)] = int16_t(v);
@@ -336,9 +338,10 @@ void MdProcessor::seqGenerate(const Segment& seg, double from, double to, double
         auto& s = m_seqTrigs[i];
         s.clock += seg.origin;
         if (silenced(s.track) || ((seg.mutes >> s.track) & 1)) continue;   // muted: no trig
-        if (&seg == &m_seg && m_recSkip[size_t(s.track)] == s.stepIndex) { m_recSkip[size_t(s.track)] = -1; continue; }   // played live already
+        if (&seg == &m_seg && !s.lockOnly && m_recSkip[size_t(s.track)] == s.stepIndex) { m_recSkip[size_t(s.track)] = -1; continue; }   // played live already
         const double host = (s.clock - m_seqClock0) / m_seqCps;
-        m_pending.push_back({s.track, juce::jmax(0.0, host * ratio), s.accent ? seg.accentOn : -128, int(i)});
+        const int level = s.accent ? seg.accentOn : -128;
+        m_pending.push_back({s.track, juce::jmax(0.0, host * ratio), s.gain == 1.0 ? level : int(std::lround(level * s.gain)), int(i)});
     }
 }
 
@@ -476,16 +479,20 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
             }
         }
     }
-    for (auto& sk : m_recSkip)   // a live-played step's mark ends once its step has gone by
-        if (sk >= 0 && (!m_seg.valid || m_seg.origin + double(sk + 1) * m_seg.player.clocksPerStep() < c0)) sk = -1;
+    for (int t = 0; t < kTracks; ++t) {   // a live-played step's mark ends once its step has gone by
+        auto& sk = m_recSkip[size_t(t)];
+        if (sk >= 0 && (!m_seg.valid || m_seg.origin + double(sk + 1) * m_seg.player.trackStep(t, extrasOn()) < c0)) sk = -1;
+    }
     if (m_seg.valid && c1 >= m_seg.origin) {
         int64_t k = int64_t(std::floor((c1 - m_seg.origin) / m_seg.player.clocksPerStep()));
         if (m_seg.steps >= 0 && k >= m_seg.steps) k = m_seg.steps - 1;
         m_seqStepUi.store(m_seg.player.stepOf(k));
         m_seqStepIndexUi.store(k);
+        m_seqPosUi.store(juce::jmin(c1 - m_seg.origin, m_seg.steps >= 0 ? double(m_seg.steps) * m_seg.player.clocksPerStep() - 1e-6 : 1e300));
     } else {
         m_seqStepUi.store(-1);
         m_seqStepIndexUi.store(-1);
+        m_seqPosUi.store(-1.0);
     }
 }
 
@@ -519,14 +526,16 @@ void MdProcessor::recordTrig(int t, double clock, int velocity)
 {
     juce::ignoreUnused(velocity);
     if (!m_recordingUi.load() || !m_seg.valid || m_seg.slot < 0) return;
-    const double T = m_seg.player.clocksPerStep();
+    const bool extras = extrasOn();
+    const double T = m_seg.player.trackStep(t, extras);   // the track's own steps (its speed)
     const double at = (clock - m_seg.origin) / T;
     int64_t k = int64_t(std::floor(at));
     const double late = T == 3.0 ? 2.0 / 3.0 : T == 8.0 ? 5.0 / 8.0 : T == 4.0 ? 0.5 : 2.0;   // clocks per step 6 3 8 4 = 1x 2x 3/4x 3/2x
     if (at - double(k) >= late - 1e-9) ++k;
     if (k < 0) k = 0;
-    if (m_seg.steps >= 0 && k >= m_seg.steps) k = m_seg.steps - 1;
-    const int step = m_seg.player.stepOf(k);
+    const int64_t lastK = m_seg.steps >= 0 ? int64_t(std::ceil(double(m_seg.steps) * m_seg.player.clocksPerStep() / T - 1e-9)) - 1 : -1;
+    if (lastK >= 0 && k > lastK) k = lastK;
+    const int step = m_seg.player.stepOf(k, t, extras);
     recordPush({0, int8_t(t), 0, int8_t(step), 0, int16_t(m_seg.slot)});
     if (m_seg.origin + double(k) * T > clock) m_recSkip[size_t(t)] = k;   // its step is still to come in this pass: played already
 }

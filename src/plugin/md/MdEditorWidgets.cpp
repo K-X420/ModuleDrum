@@ -150,12 +150,22 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
         const bool ink = !trig;
         cv.text(spec::kFontBold8, juce::String(s + 1).toRawUTF8(), r.getX() + 3, r.getY() + 3, ink);
         if (gr.mark > 0 && gr.mark < 7 && hasTrig) cv.fillRect(r.getCentreX() - 2, r.getBottom() - 8, 4, 4, ink);
+        if (gr.mark == 0 && ((gr.lockTrigs >> s) & 1)) {   // a trigless lock: a hollow box
+            const int bx = r.getCentreX() - 3, by = r.getBottom() - 10;
+            for (int c = 0; c < 7; ++c) { cv.set(bx + c, by, ink); cv.set(bx + c, by + 6, ink); cv.set(bx, by + c, ink); cv.set(bx + 6, by + c, ink); }
+        }
+        if (gr.mark == 7 && (i + 1 == gr.eu1 || i + 1 == gr.eu2))   // GENERATE: the generators' pulse counts
+            cv.textCentred(spec::kFontTiny3x5, i + 1 == gr.eu1 && i + 1 == gr.eu2 ? "E12" : i + 1 == gr.eu1 ? "E1" : "E2", r.getX() + 1, r.getWidth() - 1, r.getBottom() - 7, ink);
         if (extras && gr.extra(s) != 0) {   // the value: "50%", "+6", "1/64"
             const int v = gr.extra(s);
             const std::string label = gr.mark == 4 ? mnm::mddump::conditionName(v)
                                     : gr.mark == 5 ? (v > 0 ? "+" : "") + std::to_string(v)
                                     : mnm::mddump::retrigName(uint8_t(v));
             cv.textCentred(spec::kFontTiny3x5, label.c_str(), r.getX() + 1, r.getWidth() - 1, r.getY() + 15, ink);
+            if (gr.mark == 6 && gr.fade[size_t(s)] != 0) {   // the fade: V-32 (out) / V+32 (in)
+                const int f = gr.fade[size_t(s)];
+                cv.textCentred(spec::kFontTiny3x5, ("V" + std::string(f > 0 ? "+" : "") + std::to_string(f)).c_str(), r.getX() + 1, r.getWidth() - 1, r.getY() + 21, ink);
+            }
         }
         else if (i == m_selected && !extras) {   // which track the steps are: its machine on its own key (T3: key 3), the others blank
             const int mi = juce::jlimit(0, kNumMachines - 1, m_machine[size_t(m_selected)]);
@@ -249,7 +259,8 @@ void MdTrackKeys::mouseDown(const juce::MouseEvent& e)
             const bool ctrl = e.mods.isCommandDown() || e.mods.isCtrlDown();
             if (ctrl && e.mods.isAltDown() && !e.mods.isPopupMenu()) { if (onTrackLen && s < m_grid.length) onTrackLen(s); return; }
             if (m_grid.mark == 7 && !ctrl && !e.mods.isPopupMenu()) {   // GENERATE: the key is a number
-                if (onGenClick) onGenClick(i, e.mods.isShiftDown(), e.mods.isAltDown());
+                if (e.mods.isAltDown() && e.mods.isShiftDown()) { if (onGenClick2) onGenClick2(i); }
+                else if (onGenClick) onGenClick(i, e.mods.isShiftDown(), e.mods.isAltDown());
                 return;
             }
             if (m_grid.mark == 8 && !ctrl && !e.mods.isPopupMenu()) {   // LANE: the height is the value
@@ -360,10 +371,16 @@ void MdTrackKeys::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhe
     const auto now = juce::Time::getMillisecondCounter();
     if (w.isSmooth && now - m_lastWheel < 60) return;   // a smooth wheel: a step at a time
     const int dir = (d > 0) != w.isReversed ? 1 : -1;
-    if (m_grid.mark == 7) { m_lastWheel = now; if (onGenWheel) onGenWheel(dir); return; }
+    if (m_grid.mark == 7) {
+        m_lastWheel = now;
+        if (e.mods.isShiftDown()) { if (onGenShiftWheel) onGenShiftWheel(dir); }
+        else if (onGenWheel) onGenWheel(dir);
+        return;
+    }
     if (key < 0 || s >= m_grid.length) return;
     m_lastWheel = now;
     if (m_grid.mark == 8) { if (onLaneWheel) onLaneWheel(s, e.mods.isShiftDown() ? 8 * dir : dir); return; }
+    if (e.mods.isAltDown()) { if (onExtraAltWheel) onExtraAltWheel(s, m_grid.mark - 4, dir); return; }
     if (onExtraWheel) onExtraWheel(s, m_grid.mark - 4, (d > 0) != w.isReversed ? 1 : -1, e.mods.isShiftDown());
 }
 
@@ -371,11 +388,12 @@ void MdTrackKeys::mouseMove(const juce::MouseEvent& e)
 {
     const auto p = e.getPosition() / kScale;
     juce::String tip;
-    if (m_grid.on && m_grid.mark == 7) { setTooltip("Generate. Click key N: N hits a page, even. Shift: random. Alt: every Nth. Wheel: rotate"); return; }
+    if (m_grid.on && m_grid.mark == 7) { setTooltip("Generate. Click key N: N hits a page, even (Euclidean). Alt+Shift+click: a second generator. B: how they combine. Wheel / Shift+wheel: rotate. Shift: random. Alt: every Nth"); return; }
     if (m_grid.on && m_grid.mark == 8) { setTooltip("Lock lane (the knob touched last). Drag: draw. Shift+drag: ramp. Alt: clear. Wheel: nudge"); return; }
     if (m_grid.on && m_grid.mark >= 4) {
         static const char* const what[3] = {"Condition", "Micro-timing", "Retrig"};
-        setTooltip(juce::String(what[m_grid.mark - 4]) + ". Click: set / clear. Wheel: change" + (m_grid.mark == 6 ? ". Shift+wheel: length" : ""));
+        setTooltip(juce::String(what[m_grid.mark - 4]) + ". Click: set / clear. Wheel: change"
+                   + (m_grid.mark == 6 ? ". Shift+wheel: length. Alt+wheel: fade" : m_grid.mark == 5 ? ". Alt+wheel: the track's speed" : ""));
         return;
     }
     if (m_grid.on) {

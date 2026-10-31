@@ -69,13 +69,28 @@ struct Pattern {
     //   cond    the trig condition, 0 none (conditionName)
     //   micro   a nudge of -23..+23 24ths of a step (early / late)
     //   retrig  0 off, else bits 0-2 the rate (retrigHits) and bits 3-5 the steps it lasts, less one
+    //   retrigFade  the retrig's velocity curve, -63..63: below 0 the hits fade out (-63: to silence), above 0 they
+    //               fade in (63: from silence); 0 all at the trig's level
+    //   lockTrigs   trigless locks (bit = step): the step's locks are set there without a trig (never with a trig)
+    // Per track: its own length and speed (trackSpeedName), and its Euclidean generators (Euclid, for GENERATE).
     // encodePattern leaves them out; they travel in a message of their own (encodePatternExtras). copySteps and
     // clearSteps take them with the trig; a trig taken off clears its own (clearStepExtras).
     uint8_t cond[kTracks][64] = {};
     int8_t micro[kTracks][64] = {};
     uint8_t retrig[kTracks][64] = {};
-    uint8_t trackLen[kTracks] = {};   // a track's own length in steps (it loops there); 0 = the pattern's
+    int8_t retrigFade[kTracks][64] = {};
+    uint64_t lockTrigs[kTracks] = {};
+    uint8_t trackLen[kTracks] = {};     // a track's own length in steps (it loops there); 0 = the pattern's
+    uint8_t trackSpeed[kTracks] = {};   // 0 the pattern's speed, else kTrackSpeeds - 1 (2X 3/2X 3/4X 1/2X 1/4X 1/8X of it)
+    // GENERATE's Euclidean generators of a track: pulses (a page) and rotation of each, and how they combine.
+    // pulses1 0 = none (the track's trigs are its own).
+    struct Euclid {
+        uint8_t pulses1 = 0, pulses2 = 0, rot1 = 0, rot2 = 0, op = 0;   // op: 0 OR, 1 AND, 2 XOR, 3 1-2 (the first without the second)
+        bool operator==(const Euclid& o) const { return pulses1 == o.pulses1 && pulses2 == o.pulses2 && rot1 == o.rot1 && rot2 == o.rot2 && op == o.op; }
+    };
+    Euclid euclid[kTracks] = {};
     bool hasExtras() const;
+    bool hasNewExtras() const;   // any of the second set (fade, trigless locks, speeds, generators): a version 2 message
     void clearStepExtras(int track, int step);
 };
 
@@ -93,6 +108,22 @@ inline int retrigSteps(uint8_t r) { return ((r >> 3) & 7) + 1; }
 inline uint8_t makeRetrig(int rate, int steps) { return rate < 1 ? 0 : uint8_t((rate > 7 ? 7 : rate) | (((steps < 1 ? 1 : steps > 8 ? 8 : steps) - 1) << 3)); }
 int retrigHits(uint8_t r);                         // hits a step, 0 off
 std::string retrigName(uint8_t r);                 // "1/32", "1/64x2" (two steps), "" off
+// A retrig's hit h of n: its level against the trig's (1 = the same), by the fade (retrigFade)
+double retrigGain(int fade, int h, int n);
+// Track speeds (trackSpeed): 0 the pattern's; 1..6 = 2X 3/2X 3/4X 1/2X 1/4X 1/8X of it. A step of the track lasts
+// the pattern's step x den / num.
+constexpr int kTrackSpeeds = 7;
+inline void trackSpeedRatio(int code, int& num, int& den)
+{
+    static const int n[kTrackSpeeds] = {1, 2, 3, 3, 1, 1, 1}, d[kTrackSpeeds] = {1, 1, 2, 4, 2, 4, 8};
+    const int c = code >= 0 && code < kTrackSpeeds ? code : 0;
+    num = n[c]; den = d[c];
+}
+std::string trackSpeedName(int code);              // "1X" (the pattern's), "2X", "3/2X", "3/4X", "1/2X", "1/4X", "1/8X"
+// The trigs a Euclidean generator set makes over len steps: each generator's pulses spread evenly a page (the first
+// on step 1), turned by its rotation, then combined
+uint64_t euclidSteps(const Pattern::Euclid& e, int len);
+const char* euclidOpName(int op);                  // "OR" "AND" "XOR" "1-2"
 
 struct SongRow {
     uint8_t bytes[10] = {};                            // pattern, - (always 0), loops, jump, mutes (2), tempo (2), start, end

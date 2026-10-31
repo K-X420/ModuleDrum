@@ -32,14 +32,34 @@ int PatternPlayer::lock(int track, int param, int step) const
     return v <= 127 ? v : -1;
 }
 
+double PatternPlayer::trackStepClocks(const mddump::Pattern& p, int track, bool extras)
+{
+    const double step = stepClocks(p.doubleTempo);
+    if (!extras || track < 0 || track > 15 || !p.trackSpeed[track]) return step;
+    int num = 1, den = 1;
+    mddump::trackSpeedRatio(p.trackSpeed[track], num, den);
+    return step * den / num;
+}
+
+double PatternPlayer::tailClocks(bool extras) const
+{
+    if (!extras) return m_swing;
+    double slowest = m_step;
+    for (int t = 0; t < 16; ++t) slowest = std::max(slowest, trackStep(t, true));
+    return slowest * double(m_p.swingAmount) / 16384.0 + slowest * 9.0;
+}
+
 SeqTrig PatternPlayer::trigAt(int64_t stepIndex, int t, bool extras) const
 {
     SeqTrig e;
     const int span = spanOf(t, extras);
+    const double sc = trackStep(t, extras);
+    const double swing = sc == m_step ? m_swing : sc * double(m_p.swingAmount) / 16384.0;
+    const int swingWhole = sc == m_step ? m_swingWhole : int(std::lround(swing - 0.5));   // the OS's whole clocks (a slide's)
     e.stepIndex = stepIndex;
     e.step = stepOf(stepIndex, t, extras);
     e.track = t;
-    e.clock = double(stepIndex) * m_step + (swung(t, e.step) ? m_swing : 0.0);
+    e.clock = double(stepIndex) * sc + (swung(t, e.step) ? swing : 0.0);
     e.accent = accented(t, e.step);
     e.locks.fill(-1);
     e.slideTo.fill(-1);
@@ -49,9 +69,9 @@ SeqTrig PatternPlayer::trigAt(int64_t stepIndex, int t, bool extras) const
         auto after = [&](int s) { return s + 1 >= m_start + span ? m_start : s + 1; };
         int n = 1, next = after(e.step);
         while (!hasTrig(t, next) && n < span) { ++n; next = after(next); }
-        int32_t clocks = n * m_step;
+        int32_t clocks = sc == m_step ? n * m_step : int32_t(std::lround(n * sc));
         const bool a = swung(t, e.step), b = swung(t, next);
-        if (a != b) clocks += a ? -m_swingWhole : m_swingWhole;
+        if (a != b) clocks += a ? -swingWhole : swingWhole;
         if (clocks == 0) clocks = 1;
         for (int q = 0; q < 24; ++q) {
             if (e.locks[size_t(q)] < 0) continue;
@@ -102,14 +122,21 @@ bool PatternPlayer::lastCondition(int64_t k, int t, bool inclusive, const TrigCo
     return false;
 }
 
+int64_t PatternPlayer::neighbourStep(int64_t k, int t) const
+{
+    if (t < 1) return k;
+    const double a = trackStep(t, true), b = trackStep(t - 1, true);
+    return a == b ? k : int64_t(std::floor(double(k) * a / b + 1e-9));   // the track before's step at the same time
+}
+
 bool PatternPlayer::conditionPlays(int64_t k, int t, const TrigContext& ctx) const
 {
     const int c = m_p.cond[t][stepOf(k, t, true)];
     switch (c) {
         case mddump::kCondPre: return lastCondition(k, t, false, ctx);
         case mddump::kCondNotPre: return !lastCondition(k, t, false, ctx);
-        case mddump::kCondNei: return lastCondition(k, t - 1, true, ctx);   // the track before plays first
-        case mddump::kCondNotNei: return !lastCondition(k, t - 1, true, ctx);
+        case mddump::kCondNei: return lastCondition(neighbourStep(k, t), t - 1, true, ctx);   // the track before plays first
+        case mddump::kCondNotNei: return !lastCondition(neighbourStep(k, t), t - 1, true, ctx);
         default: return plainCondition(k, t, ctx);
     }
 }
@@ -118,34 +145,58 @@ void PatternPlayer::trigs(double from, double to, std::vector<SeqTrig>& out, int
 {
     if (to <= from) return;
     const size_t first = out.size();
-    const double reach = tailClocks(ctx.extras);   // a step's trigs: at its start up to this much later
-    int64_t k = std::max<int64_t>(0, int64_t(std::floor((from - reach) / m_step)));
-    for (; double(k) * m_step < to + (ctx.extras ? m_step : 0.0) && (maxSteps < 0 || k < maxSteps); ++k) {
-        for (int t = 0; t < 16; ++t) {
-            const int step = stepOf(k, t, ctx.extras);
-            if (!hasTrig(t, step)) continue;
-            double c = double(k) * m_step + (swung(t, step) ? m_swing : 0.0);
-            if (!ctx.extras) {
+    if (!ctx.extras) {   // as the unit: one step clock for every track
+        const double reach = m_swing;   // a step's trigs: at its start, or a swing delay later
+        int64_t k = std::max<int64_t>(0, int64_t(std::floor((from - reach) / m_step)));
+        for (; double(k) * m_step < to && (maxSteps < 0 || k < maxSteps); ++k)
+            for (int t = 0; t < 16; ++t) {
+                const int step = stepOf(k, t, false);
+                if (!hasTrig(t, step)) continue;
+                const double c = double(k) * m_step + (swung(t, step) ? m_swing : 0.0);
                 if (c < from || c >= to) continue;
                 out.push_back(trigAt(k, t));
-                continue;
             }
-            c = std::max(0.0, c + microClocks(t, step));   // (a nudge early on the very first step: at the start)
-            const uint8_t r = m_p.retrig[t][step];
-            const int hits = mddump::retrigHits(r) * (r ? mddump::retrigSteps(r) : 1);
-            const double gap = r ? double(m_step) / mddump::retrigHits(r) : 0.0;
-            const double last = c + gap * std::max(0, hits - 1);
-            if (last < from || c >= to) continue;
-            if (!conditionPlays(k, t, ctx)) continue;
-            const SeqTrig e = trigAt(k, t, true);
-            for (int h = 0; h < std::max(1, hits); ++h) {
-                const double at = c + gap * h;
-                if (at < from || at >= to) continue;
-                SeqTrig x = e;
-                x.clock = at;
-                x.retrig = h > 0;
-                if (h > 0) x.slideMask = 0;
-                out.push_back(x);
+    } else {
+        // each track on its own step clock (its speed), its steps counted from the origin; the segment ends at the
+        // same clock for every track. A step's trigs: from its start (a nudge early) to its retrigs up to 8 steps on.
+        const double end = maxSteps < 0 ? -1.0 : double(maxSteps) * m_step;
+        for (int t = 0; t < 16; ++t) {
+            if (!m_p.trigs[t] && !m_p.lockTrigs[t]) continue;
+            const double sc = trackStep(t, true);
+            const double swing = sc == m_step ? m_swing : sc * double(m_p.swingAmount) / 16384.0;
+            const double reach = swing + sc * 9.0;
+            for (int64_t k = std::max<int64_t>(0, int64_t(std::floor((from - reach) / sc))); double(k) * sc < to + sc; ++k) {
+                if (end >= 0 && double(k) * sc >= end - 1e-9) break;
+                const int step = stepOf(k, t, true);
+                const bool trig = hasTrig(t, step), lockTrig = !trig && hasLockTrig(t, step);
+                if (!trig && !lockTrig) continue;
+                double c = double(k) * sc + (swung(t, step) ? swing : 0.0);
+                c = std::max(0.0, c + microClocks(t, step, sc));   // (a nudge early on the very first step: at the start)
+                const uint8_t r = trig ? m_p.retrig[t][step] : 0;
+                const int hits = mddump::retrigHits(r) * (r ? mddump::retrigSteps(r) : 1);
+                const double gap = r ? sc / mddump::retrigHits(r) : 0.0;
+                const double last = c + gap * std::max(0, hits - 1);
+                if (last < from || c >= to) continue;
+                if (!conditionPlays(k, t, ctx)) continue;
+                SeqTrig e = trigAt(k, t, true);
+                if (lockTrig) {   // its locks only, there (no slide from it)
+                    e.clock = c;
+                    e.lockOnly = true;
+                    e.slideMask = 0;
+                    if (c >= from && c < to) out.push_back(e);
+                    continue;
+                }
+                const int fade = m_p.retrigFade[t][step];
+                for (int h = 0; h < std::max(1, hits); ++h) {
+                    const double at = c + gap * h;
+                    if (at < from || at >= to) continue;
+                    SeqTrig x = e;
+                    x.clock = at;
+                    x.retrig = h > 0;
+                    x.gain = mddump::retrigGain(fade, h, hits);
+                    if (h > 0) x.slideMask = 0;
+                    out.push_back(x);
+                }
             }
         }
     }

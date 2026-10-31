@@ -171,6 +171,12 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
             return true;
         }
         if ((code == 'H' || code == 'h') && m_markMode == 5) { humanise(false); return true; }
+        if ((code == 'B' || code == 'b') && m_markMode == 7) {   // GENERATE: how the two generators combine
+            if (m_gen.mode != 1 || !m_gen.n2) { flash("NO GEN 2"); return true; }
+            m_gen.op = (m_gen.op + 1) & 3;
+            genApply(euclidSay());
+            return true;
+        }
         const int x = !m_proc.extrasOn() ? -1 : code == 'C' || code == 'c' ? 0 : code == 'T' || code == 't' ? 1 : code == 'R' || code == 'r' ? 2 : -1;
         if (x >= 0) {   // EXTRAS: the CONDITION / MICRO-TIMING / RETRIG edit window (again: back to the trigs)
             static const char* const names[3] = {"COND", "MICRO", "RETRIG"};
@@ -205,7 +211,7 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
     }
     if (m_heldStep >= 0 && (k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey)) {   // the held step's locks
         const int t = m_track;
-        doEdit(editSlot(), "clear note locks", [&](mnm::mddump::Pattern& x) { for (int s = 0; s < 64; ++s) if ((m_heldSet >> s) & 1) x.clearStepLocks(t, s); });
+        doEdit(editSlot(), "clear note locks", [&](mnm::mddump::Pattern& x) { for (int s = 0; s < 64; ++s) if ((m_heldSet >> s) & 1) { x.clearStepLocks(t, s); dropEmptyLockTrig(x, t, s); } });
         flash("LOCKS CLEARED");
         for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
         refreshGrid();
@@ -240,9 +246,18 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
 void MdEditor::genBegin()
 {
     ++m_gen.session;
-    m_gen.slot = editSlot(); m_gen.track = m_track; m_gen.mode = 0; m_gen.n = 0; m_gen.rot = 0;
+    m_gen.slot = editSlot(); m_gen.track = m_track; m_gen.mode = 0; m_gen.n = 0; m_gen.rot = 0; m_gen.n2 = 0; m_gen.rot2 = 0; m_gen.op = 0;
     const auto p = m_proc.bankPattern(m_gen.slot);
     m_gen.base = p ? *p : mnm::mddump::Pattern();
+    if (const auto& e = m_gen.base.euclid[juce::jlimit(0, kTracks - 1, m_track)]; e.pulses1) {   // the generators it was made with: go on from them
+        m_gen.mode = 1; m_gen.n = e.pulses1; m_gen.rot = e.rot1; m_gen.n2 = e.pulses2; m_gen.rot2 = e.rot2; m_gen.op = e.op;
+    }
+}
+
+juce::String MdEditor::euclidSay() const
+{
+    if (!m_gen.n2) return "EUCLID " + juce::String(m_gen.n);   // (the bar's box fits about 8)
+    return juce::String(m_gen.n) + " " + mnm::mddump::euclidOpName(m_gen.op) + " " + juce::String(m_gen.n2);
 }
 
 void MdEditor::genApply(const juce::String& say)
@@ -251,21 +266,35 @@ void MdEditor::genApply(const juce::String& say)
     const Gen& g = m_gen;
     const int t = m_track;
     doEdit(g.slot, "generate", [&](mnm::mddump::Pattern& x) {
-        const int len = juce::jlimit(1, 64, int(x.length)), pages = (len + 15) / 16;
+        const int plen = juce::jlimit(1, 64, int(x.length));
+        const int own = m_proc.extrasOn() ? int(x.trackLen[t]) : 0;
+        const int len = g.mode == 1 && own > 0 && own < plen ? own : plen, pages = (len + 15) / 16;   // EUCLID: over the track's own length
         const int hits = juce::jmin(len, g.n * pages);
         uint64_t m = 0;
-        if (g.mode == 1) { for (int i = 0; i < len; ++i) if ((i * hits) % len < hits) m |= 1ull << i; }   // spread evenly, the first on step 1
+        x.euclid[t] = {};
+        if (g.mode == 1) {   // the generators: each spread evenly (the first on step 1), turned, combined
+            mnm::mddump::Pattern::Euclid e;
+            e.pulses1 = uint8_t(g.n); e.pulses2 = uint8_t(g.n2); e.op = uint8_t(g.op & 3);
+            e.rot1 = uint8_t(((g.rot % len) + len) % len); e.rot2 = uint8_t(((g.rot2 % len) + len) % len);
+            m = mnm::mddump::euclidSteps(e, len);
+            x.euclid[t] = e;
+        }
         else if (g.mode == 2) { juce::Random r(g.seed); for (int left = hits; left > 0;) { const int s = r.nextInt(len); if (!((m >> s) & 1)) { m |= 1ull << s; --left; } } }
         else if (g.mode == 3) for (int i = 0; i < len; i += juce::jmax(1, g.n)) m |= 1ull << i;
         x.clearSteps(0, len, t);
-        const int rot = ((g.rot % len) + len) % len;
+        const int rot = g.mode == 1 ? 0 : ((g.rot % len) + len) % len;   // (EUCLID: turned in its generators)
         for (int s = 0; s < len; ++s) {
             const int d = (s + rot) % len;
             if (g.mode == 0) { if ((g.base.trigs[t] >> s) & 1) x.copySteps(g.base, s, d, 1, t, t); continue; }   // only turned round
             if (!((m >> s) & 1)) continue;
             if ((g.base.trigs[t] >> d) & 1) x.copySteps(g.base, d, d, 1, t, t);   // a step that was there keeps its locks
-            else x.trigs[t] |= 1ull << d;
+            else {
+                if ((g.base.lockTrigs[t] >> d) & 1) { x.copySteps(g.base, d, d, 1, t, t); x.lockTrigs[t] &= ~(1ull << d); }   // a trigless lock's too
+                x.trigs[t] |= 1ull << d;
+            }
         }
+        for (int s = 0; s < len; ++s)   // trigless locks stay where no trig came
+            if (((g.base.lockTrigs[t] >> s) & 1) && !((x.trigs[t] >> s) & 1)) x.copySteps(g.base, s, s, 1, t, t);
     }, 50000 + (g.session & 0xFFF));
     holdStep(-1);
     flash(say);

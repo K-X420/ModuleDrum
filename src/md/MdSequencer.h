@@ -34,6 +34,8 @@ struct SeqTrig {
     std::array<int16_t, 24> slideTo{};     // their end: the next trig's lock, -1 = the kit value
     std::array<int32_t, 24> slideClocks{}; // their duration in clocks (the OS's integer count)
     bool retrig = false;                   // a retrig's later hit: the voice again, its locks already set
+    bool lockOnly = false;                 // a trigless lock: its locks are set, no voice
+    double gain = 1.0;                     // the hit's level against the trig's (a retrig's fade)
 };
 
 // Monomodule's extras as the player plays them (all off by default, as a real MD): trig conditions, micro-timing,
@@ -63,16 +65,21 @@ public:
     int stepOf(int64_t stepIndex) const { return m_start + int(stepIndex % m_span); }
     // With the extras, a track with its own length (shorter than the pass) loops there
     int spanOf(int track, bool extras) const { const int l = m_p.trackLen[track]; return extras && l > 0 && l < m_span ? l : m_span; }
+    // stepIndex here counts the track's own steps (with the extras a track can have its own speed, trackStep)
     int stepOf(int64_t stepIndex, int track, bool extras) const { return m_start + int(stepIndex % spanOf(track, extras)); }
+    // A step of the track in clocks: the pattern's, or with the extras the track's own speed of it
+    double trackStep(int track, bool extras) const { return trackStepClocks(m_p, track, extras); }
+    static double trackStepClocks(const mddump::Pattern& p, int track, bool extras);
     double swingClocks() const { return m_swing; }    // the delay of a swung step
     // How far after its step a trig can still sound: the swing; with the extras also a micro-timing nudge and retrigs
-    // up to 8 steps on. A pattern that ended keeps playing its trigs this long past its end.
-    double tailClocks(bool extras) const { return m_swing + (extras ? m_step * 9.0 : 0.0); }
+    // up to 8 steps on (of the slowest track). A pattern that ended keeps playing its trigs this long past its end.
+    double tailClocks(bool extras) const;
 
     bool swung(int track, int step) const { return bit(m_p.swingEditAll, m_p.swing, m_p.swingPerTrack[track], step); }
     bool accented(int track, int step) const { return bit(m_p.accentEditAll, m_p.accent, m_p.accentPerTrack[track], step); }
     bool slid(int track, int step) const { return bit(m_p.slideEditAll, m_p.slide, m_p.slidePerTrack[track], step); }
     bool hasTrig(int track, int step) const { return step >= 0 && step < 64 && ((m_p.trigs[track] >> step) & 1); }
+    bool hasLockTrig(int track, int step) const { return step >= 0 && step < 64 && ((m_p.lockTrigs[track] >> step) & 1) && !hasTrig(track, step); }
     int lock(int track, int param, int step) const;   // -1 = none
 
     // The trigs that fire in [from, to) (clocks from the origin, where the first pass starts), in time order, of the
@@ -84,12 +91,13 @@ public:
     // Does the trig of (stepIndex, track) pass its condition? Passes count from the origin; PRE / NEI look back at the
     // last trig with another kind of condition on the track / the track before (none: false). No condition: true.
     bool conditionPlays(int64_t stepIndex, int track, const TrigContext& ctx) const;
-    double microClocks(int track, int step) const { return double(m_p.micro[track][step]) * m_step / 24.0; }
+    double microClocks(int track, int step, double stepClocks) const { return double(m_p.micro[track][step]) * stepClocks / 24.0; }
 
 private:
     static bool bit(uint32_t editAll, uint64_t global, uint64_t perTrack, int step) { return ((editAll ? global : perTrack) >> step) & 1; }
     bool plainCondition(int64_t stepIndex, int track, const TrigContext& ctx) const;   // any but PRE / NEI
     bool lastCondition(int64_t stepIndex, int track, bool inclusive, const TrigContext& ctx) const;   // PRE / NEI's look back
+    int64_t neighbourStep(int64_t stepIndex, int track) const;   // NEI: the step of the track before at the same time (speeds)
     mddump::Pattern m_p;
     int m_len = 16, m_step = 6, m_start = 0, m_span = 16;
     double m_swing = 0;

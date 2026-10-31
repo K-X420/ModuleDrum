@@ -173,13 +173,22 @@ bool Pattern::hasExtras() const
     for (int t = 0; t < kTracks; ++t)
         for (int s = 0; s < 64; ++s) if (cond[t][s] || micro[t][s] || retrig[t][s]) return true;
     for (int t = 0; t < kTracks; ++t) if (trackLen[t]) return true;
+    return hasNewExtras();
+}
+
+bool Pattern::hasNewExtras() const
+{
+    for (int t = 0; t < kTracks; ++t) {
+        if (lockTrigs[t] || trackSpeed[t] || euclid[t].pulses1) return true;
+        for (int s = 0; s < 64; ++s) if (retrigFade[t][s]) return true;
+    }
     return false;
 }
 
 void Pattern::clearStepExtras(int track, int step)
 {
     if (track < 0 || track >= kTracks || step < 0 || step >= 64) return;
-    cond[track][step] = 0; micro[track][step] = 0; retrig[track][step] = 0;
+    cond[track][step] = 0; micro[track][step] = 0; retrig[track][step] = 0; retrigFade[track][step] = 0;
 }
 
 namespace {
@@ -221,6 +230,47 @@ std::string retrigName(uint8_t r)
     return s;
 }
 
+double retrigGain(int fade, int h, int n)
+{
+    if (fade == 0 || n < 2) return 1.0;
+    const double x = double(std::clamp(h, 0, n - 1)) / double(n - 1), f = std::clamp(fade, -63, 63) / 63.0;
+    return f < 0 ? 1.0 + f * x : 1.0 - f * (1.0 - x);   // fading out: down to 1 + f at the last hit; in: from 1 - f
+}
+
+std::string trackSpeedName(int code)
+{
+    static const char* const names[kTrackSpeeds] = {"1X", "2X", "3/2X", "3/4X", "1/2X", "1/4X", "1/8X"};
+    return names[code >= 0 && code < kTrackSpeeds ? code : 0];
+}
+
+uint64_t euclidSteps(const Pattern::Euclid& e, int len)
+{
+    len = std::clamp(len, 1, 64);
+    const int pages = (len + 15) / 16;
+    auto gen = [&](int pulses, int rot) {
+        const int hits = std::min(len, pulses * pages);
+        uint64_t m = 0;
+        if (hits <= 0) return m;
+        for (int i = 0; i < len; ++i)
+            if ((i * hits) % len < hits) m |= 1ull << ((i + rot) % len);
+        return m;
+    };
+    const uint64_t a = gen(e.pulses1, e.rot1 % len), b = gen(e.pulses2, e.rot2 % len);
+    if (!e.pulses2) return a;
+    switch (e.op) {
+        case 1: return a & b;
+        case 2: return a ^ b;
+        case 3: return a & ~b;
+        default: return a | b;
+    }
+}
+
+const char* euclidOpName(int op)
+{
+    static const char* const names[4] = {"OR", "AND", "XOR", "1-2"};
+    return names[op & 3];
+}
+
 namespace {
 void setBit(uint64_t& m, int s, bool on) { if (on) m |= 1ull << s; else m &= ~(1ull << s); }
 bool getBit(uint64_t m, int s) { return (m >> s) & 1; }
@@ -248,6 +298,8 @@ void Pattern::copySteps(const Pattern& src, int from, int to, int count, int tra
                 if (v <= 127) setLock(dt, q, d, v); else clearLock(dt, q, d);
             }
             cond[dt][d] = src.cond[t][s]; micro[dt][d] = src.micro[t][s]; retrig[dt][d] = src.retrig[t][s];
+            retrigFade[dt][d] = src.retrigFade[t][s];
+            setBit(lockTrigs[dt], d, getBit(src.lockTrigs[t], s));
         }
     }
 }
@@ -262,6 +314,7 @@ void Pattern::clearSteps(int from, int count, int track)
         for (int t = all ? 0 : track; t < (all ? kTracks : track + 1); ++t) {
             if (t < 0 || t >= kTracks) continue;
             setBit(trigs[t], s, false);
+            setBit(lockTrigs[t], s, false);
             setBit(accentPerTrack[t], s, false); setBit(slidePerTrack[t], s, false); setBit(swingPerTrack[t], s, false);
             clearStepLocks(t, s);
             clearStepExtras(t, s);
@@ -487,39 +540,66 @@ bool isPatternExtras(const uint8_t* m, size_t n)
     return n >= 9 && m[0] == 0xF0 && m[1] == 0x7D && m[2] == 'M' && m[3] == 'N' && m[4] == 'X' && m[n - 1] == 0xF7;
 }
 
+// Entries after the head: version 1, five bytes (track, step, condition, micro + 64, retrig; track 0x40 | t: its
+// length); version 2, seven (the same then fade + 64 and flags, bit 0 a trigless lock; 0x40 | t: length, speed;
+// 0x60 | t: the generators' pulses 1 and 2, rotations 1 and 2, op). Version 1 is written while only its fields are
+// used, so plugins before 1.4 still read the extras of such patterns.
 std::vector<uint8_t> encodePatternExtras(const Pattern& p)
 {
     std::vector<uint8_t> out;
-    const std::vector<uint8_t> head = {0xF0, 0x7D, 'M', 'N', 'X', 1, uint8_t(p.position & 0x7F)};
+    const bool v2 = p.hasNewExtras();
+    const std::vector<uint8_t> head = {0xF0, 0x7D, 'M', 'N', 'X', uint8_t(v2 ? 2 : 1), uint8_t(p.position & 0x7F)};
+    auto put = [&](std::initializer_list<uint8_t> e) {
+        if (out.empty()) out = head;
+        out.insert(out.end(), e.begin(), e.begin() + (v2 ? 7 : 5));
+    };
     for (int t = 0; t < kTracks; ++t)
-        if (p.trackLen[t]) {
-            if (out.empty()) out = head;
-            out.insert(out.end(), {uint8_t(0x40 | t), uint8_t(p.trackLen[t] & 0x7F), 0, 64, 0});
-        }
+        if (p.trackLen[t] || p.trackSpeed[t]) put({uint8_t(0x40 | t), uint8_t(p.trackLen[t] & 0x7F), uint8_t(p.trackSpeed[t] % kTrackSpeeds), 64, 0, 64, 0});
     for (int t = 0; t < kTracks; ++t)
-        for (int s = 0; s < 64; ++s)
-            if (p.cond[t][s] || p.micro[t][s] || p.retrig[t][s]) {
-                if (out.empty()) out = head;
-                const int m = std::clamp(int(p.micro[t][s]), -23, 23) + 64;
-                out.insert(out.end(), {uint8_t(t), uint8_t(s), uint8_t(p.cond[t][s] & 0x7F), uint8_t(m), uint8_t(p.retrig[t][s] & 0x7F)});
+        if (const auto& e = p.euclid[t]; e.pulses1)
+            put({uint8_t(0x60 | t), uint8_t(e.pulses1 & 0x7F), uint8_t(e.pulses2 & 0x7F), uint8_t(e.rot1 & 0x3F), uint8_t(e.rot2 & 0x3F), uint8_t(e.op & 3), 0});
+    for (int t = 0; t < kTracks; ++t)
+        for (int s = 0; s < 64; ++s) {
+            const bool lockTrig = (p.lockTrigs[t] >> s) & 1;
+            if (p.cond[t][s] || p.micro[t][s] || p.retrig[t][s] || p.retrigFade[t][s] || lockTrig) {
+                const int m = std::clamp(int(p.micro[t][s]), -23, 23) + 64, f = std::clamp(int(p.retrigFade[t][s]), -63, 63) + 64;
+                put({uint8_t(t), uint8_t(s), uint8_t(p.cond[t][s] & 0x7F), uint8_t(m), uint8_t(p.retrig[t][s] & 0x7F), uint8_t(f), uint8_t(lockTrig ? 1 : 0)});
             }
+        }
     if (!out.empty()) out.push_back(0xF7);
     return out;
 }
 
 bool decodePatternExtras(const uint8_t* m, size_t n, int& position, Pattern& p)
 {
-    if (!isPatternExtras(m, n) || m[5] != 1 || (n - 8) % 5 != 0) return false;
+    if (!isPatternExtras(m, n) || (m[5] != 1 && m[5] != 2)) return false;
+    const size_t w = m[5] == 2 ? 7 : 5;
+    if ((n - 8) % w != 0) return false;
     position = m[6];
     for (int t = 0; t < kTracks; ++t) for (int s = 0; s < 64; ++s) p.clearStepExtras(t, s);
     std::memset(p.trackLen, 0, sizeof(p.trackLen));
-    for (size_t i = 7; i + 5 <= n - 1; i += 5) {
+    std::memset(p.trackSpeed, 0, sizeof(p.trackSpeed));
+    std::memset(p.lockTrigs, 0, sizeof(p.lockTrigs));
+    for (auto& e : p.euclid) e = {};
+    for (size_t i = 7; i + w <= n - 1; i += w) {
         const int t = m[i], s = m[i + 1];
-        if (t >= 0x40 && t < 0x40 + kTracks) { p.trackLen[t - 0x40] = uint8_t(s <= 64 ? s : 0); continue; }
+        if (t >= 0x40 && t < 0x40 + kTracks) {
+            p.trackLen[t - 0x40] = uint8_t(s <= 64 ? s : 0);
+            if (w == 7) p.trackSpeed[t - 0x40] = uint8_t(m[i + 2] < kTrackSpeeds ? m[i + 2] : 0);
+            continue;
+        }
+        if (t >= 0x60 && t < 0x60 + kTracks) {
+            if (w == 7) p.euclid[t - 0x60] = {uint8_t(std::min<int>(16, m[i + 1])), uint8_t(std::min<int>(16, m[i + 2])), uint8_t(m[i + 3] & 0x3F), uint8_t(m[i + 4] & 0x3F), uint8_t(m[i + 5] & 3)};
+            continue;
+        }
         if (t >= kTracks || s >= 64) continue;
         p.cond[t][s] = m[i + 2] < kConditions ? m[i + 2] : 0;
         p.micro[t][s] = int8_t(std::clamp(int(m[i + 3]) - 64, -23, 23));
         p.retrig[t][s] = uint8_t(m[i + 4] & 0x3F);
+        if (w == 7) {
+            p.retrigFade[t][s] = int8_t(std::clamp(int(m[i + 5]) - 64, -63, 63));
+            if ((m[i + 6] & 1) && !((p.trigs[t] >> s) & 1)) p.lockTrigs[t] |= 1ull << s;
+        }
     }
     return true;
 }
@@ -579,6 +659,9 @@ Dump parseDump(const uint8_t* data, size_t size, const std::string& filename)
                 std::memcpy(it->micro, probe.micro, sizeof(probe.micro));
                 std::memcpy(it->retrig, probe.retrig, sizeof(probe.retrig));
                 std::memcpy(it->trackLen, probe.trackLen, sizeof(probe.trackLen));
+                std::memcpy(it->retrigFade, probe.retrigFade, sizeof(probe.retrigFade));
+                std::memcpy(it->trackSpeed, probe.trackSpeed, sizeof(probe.trackSpeed));
+                for (int t = 0; t < kTracks; ++t) { it->lockTrigs[t] = probe.lockTrigs[t] & ~it->trigs[t]; it->euclid[t] = probe.euclid[t]; }
                 break;
             }
     }

@@ -80,10 +80,14 @@ public:
         std::array<uint8_t, 64> cond{}, retrig{};
         std::array<int8_t, 64> micro{};
         uint64_t heldSet = 0;   // every held step (held is the first of them: the knobs show its locks)
-        bool operator==(const Grid& o) const { return trackLen == o.trackLen && lane == o.lane && laneKit == o.laneKit && heldSet == o.heldSet && mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
+        uint64_t lockTrigs = 0;           // EXTRAS: trigless locks (an empty key with a box)
+        std::array<int8_t, 64> fade{};    // RETRIG: each retrig's fade
+        int eu1 = 0, eu2 = 0;             // GENERATE: the Euclidean generators' pulses (keys E1 / E2), 0 none
+        bool operator==(const Grid& o) const { return lockTrigs == o.lockTrigs && fade == o.fade && eu1 == o.eu1 && eu2 == o.eu2 && trackLen == o.trackLen && lane == o.lane && laneKit == o.laneKit && heldSet == o.heldSet && mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
         int extra(int s) const { return mark == 4 ? cond[size_t(s)] : mark == 5 ? micro[size_t(s)] : mark == 6 ? retrig[size_t(s)] : 0; }
     };
     void setGrid(const Grid& g) { if (!(g == m_grid)) { m_grid = g; repaint(); } }
+    const Grid& devGridState() const { return m_grid; }   // dev/tests
     std::function<juce::String(int step)> stepLocks;   // GRID: a step's locks as text for its tooltip ("" none)
     std::function<void(int step)> onStep, onHold;
     std::function<void(int step)> onHoldAdd;            // Ctrl + Shift + click: one more held step (or one fewer)
@@ -95,10 +99,13 @@ public:
     // the wheel over a step changes its value (alt: Shift, a retrig's length)
     std::function<void(int step, int kind, bool on, bool first)> onExtraPaint;
     std::function<void(int step, int kind, int delta, bool alt)> onExtraWheel;
+    std::function<void(int step, int kind, int delta)> onExtraAltWheel;   // Alt + wheel: RETRIG its fade, TIME the track's speed
     // GENERATE: a click on key n = n hits a page spread evenly (Shift: n at random, Alt: every n-th step); the wheel turns
     // the track's steps round
     std::function<void(int key, bool shift, bool alt)> onGenClick;
     std::function<void(int dir)> onGenWheel;
+    std::function<void(int key)> onGenClick2;      // Alt + Shift + click key n: the second Euclidean generator, n pulses (again: off)
+    std::function<void(int dir)> onGenShiftWheel;  // Shift + wheel: the second generator's rotation
     // LANE: a press / drag at a height on a step sets the parameter's lock there (Shift + drag: a ramp from where it
     // began; Alt: the lock goes); the wheel nudges it
     std::function<void(int step, int value, bool first)> onLaneSet;
@@ -219,6 +226,10 @@ public:
     int devMarkModeNow() const { return m_markMode; }
     void devGenClick(int key, bool shift, bool alt) { if (m_keys.onGenClick) m_keys.onGenClick(key, shift, alt); }
     void devGenWheel(int dir) { if (m_keys.onGenWheel) m_keys.onGenWheel(dir); }
+    void devGenClick2(int key) { if (m_keys.onGenClick2) m_keys.onGenClick2(key); }
+    void devGenShiftWheel(int dir) { if (m_keys.onGenShiftWheel) m_keys.onGenShiftWheel(dir); }
+    void devExtraAltWheel(int s, int kind, int delta) { if (m_keys.onExtraAltWheel) m_keys.onExtraAltWheel(s, kind, delta); }
+    MdTrackKeys::Grid devGrid() { refreshGrid(); return m_keys.devGridState(); }
     void devLaneParam(int p) { m_laneParam = p; refreshGrid(); }
     void devLaneSet(int s, int v, bool first) { if (m_keys.onLaneSet) m_keys.onLaneSet(s, v, first); }
     void devLaneRamp(int s0, int v0, int s1, int v1) { if (m_keys.onLaneRamp) m_keys.onLaneRamp(s0, v0, s1, v1); }
@@ -325,10 +336,20 @@ private:
     bool m_fillLatch = false;                // Shift+F: FILL stays on
     // GENERATE (E): one run of the window on a track is one undo step, every change made again from the track as it
     // was when the run began (so hit counts and rotations don't pile up)
-    struct Gen { int session = 0, slot = -1, track = -1, mode = 0, n = 0, rot = 0; juce::int64 seed = 1; mnm::mddump::Pattern base; };
+    // EVEN is the first Euclidean generator: a second one (Alt+Shift+click) combines with it (B: OR / AND / XOR / 1-2);
+    // the pattern keeps them (Pattern::euclid), so a later run goes on from them.
+    struct Gen { int session = 0, slot = -1, track = -1, mode = 0, n = 0, rot = 0, n2 = 0, rot2 = 0, op = 0; juce::int64 seed = 1; mnm::mddump::Pattern base; };
     Gen m_gen;
     void genBegin();
+    // a trigless lock left without locks goes
+    static void dropEmptyLockTrig(mnm::mddump::Pattern& p, int t, int s)
+    {
+        if (!((p.lockTrigs[t] >> s) & 1)) return;
+        for (int q = 0; q < 24; ++q) { const int row = p.lockRow(t, q); if (row >= 0 && p.locks[row][s] <= 127) return; }
+        p.lockTrigs[t] &= ~(1ull << s);
+    }
     void genApply(const juce::String& say);
+    juce::String euclidSay() const;   // what the bar says: EUCLID 5, or 5 XOR 3
     int m_laneParam = 0;                     // LANE (L): the track parameter (0..23) of the knob touched last
     juce::String laneName() const;
     int laneKitValue() const;

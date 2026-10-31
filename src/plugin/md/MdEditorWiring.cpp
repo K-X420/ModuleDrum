@@ -115,8 +115,12 @@ void MdEditor::wireKeys()
     m_keys.onPaint = [this](int s, bool on, bool first) {   // one stroke = one undo step
         if (first) ++m_paintStroke;
         const int t = m_track;
-        doEdit(editSlot(), on ? "paint steps" : "erase steps", [&](mnm::mddump::Pattern& p) {
-            if (on) p.trigs[t] |= 1ull << s;
+        const auto before = m_proc.bankPattern(editSlot());
+        const bool lockTrig = before && ((before->lockTrigs[t] >> s) & 1);
+        if (lockTrig && !first) return;   // a stroke passes over trigless locks
+        doEdit(editSlot(), lockTrig ? "clear trigless lock" : on ? "paint steps" : "erase steps", [&](mnm::mddump::Pattern& p) {
+            if (lockTrig) { p.lockTrigs[t] &= ~(1ull << s); p.clearStepLocks(t, s); }   // a click on one takes it off
+            else if (on) p.trigs[t] |= 1ull << s;
             else { p.trigs[t] &= ~(1ull << s); p.clearStepLocks(t, s); p.clearStepExtras(t, s); }
         }, 20000 + (m_paintStroke & 0xFFFF));
         if (!on) holdSteps(m_heldSet & ~(1ull << s));
@@ -179,11 +183,46 @@ void MdEditor::wireKeys()
         genApply((alt ? "EVERY " : shift ? "RANDOM " : "EVEN ") + juce::String(key + 1));
     };
     m_keys.onGenWheel = [this](int dir) { m_gen.rot += dir; genApply("ROT " + juce::String(m_gen.rot > 0 ? "+" : "") + juce::String(m_gen.rot)); };
+    m_keys.onGenClick2 = [this](int key) {   // the second generator (EVEN's the first): key n = n pulses, again = off
+        if (m_gen.slot != editSlot() || m_gen.track != m_track) genBegin();
+        if (m_gen.mode != 1) { m_gen.mode = 1; m_gen.n = 1; m_gen.rot = 0; }   // with no first yet: one pulse
+        m_gen.n2 = m_gen.n2 == key + 1 ? 0 : key + 1;
+        genApply(euclidSay());
+    };
+    m_keys.onGenShiftWheel = [this](int dir) {
+        if (m_gen.slot != editSlot() || m_gen.track != m_track) genBegin();
+        if (m_gen.mode != 1 || !m_gen.n2) { flash("NO GEN 2"); return; }
+        m_gen.rot2 += dir;
+        genApply("ROT2 " + juce::String(m_gen.rot2 > 0 ? "+" : "") + juce::String(m_gen.rot2));
+    };
+    m_keys.onExtraAltWheel = [this](int s, int kind, int delta) {
+        namespace dd = mnm::mddump;
+        const int t = m_track;
+        const auto p = m_proc.bankPattern(editSlot());
+        if (!p) return;
+        if (kind == 1) {   // TIME: the track's speed (slowest to fastest)
+            static const int order[dd::kTrackSpeeds] = {6, 5, 4, 3, 0, 2, 1};
+            int i = 0;
+            while (i < dd::kTrackSpeeds - 1 && order[i] != p->trackSpeed[t]) ++i;
+            const int code = order[juce::jlimit(0, dd::kTrackSpeeds - 1, i + delta)];
+            doEdit(editSlot(), "track speed", [&](dd::Pattern& x) { x.trackSpeed[t] = uint8_t(code); }, 46000 + t);
+            flash("T" + juce::String(t + 1) + " SPD " + juce::String(dd::trackSpeedName(code)));
+        } else if (kind == 2) {   // RETRIG: its fade, 8 at a time (-63 out to silence .. +63 in from it)
+            if (!((p->trigs[t] >> s) & 1) || !p->retrig[t][s]) { flash("NO RTRG"); return; }
+            const int f = juce::jlimit(-63, 63, int(p->retrigFade[t][s]) + 8 * delta);
+            doEdit(editSlot(), "retrig fade", [&](dd::Pattern& x) {
+                const uint64_t steps = heldTargets(s) & x.trigs[t];
+                for (int q = 0; q < 64; ++q) if (((steps >> q) & 1) && x.retrig[t][q]) x.retrigFade[t][q] = int8_t(f);
+            }, 47000 + s);
+            flash(f == 0 ? juce::String("FADE OFF") : f < 0 ? "FADE OUT " + juce::String(-f) : "FADE IN " + juce::String(f));
+        }
+        refreshGrid();
+    };
     m_keys.onLaneSet = [this](int s, int v, bool first) {   // one stroke = one undo step
         if (first) ++m_paintStroke;
         const int t = m_track, q = m_laneParam;
         const auto p = m_proc.bankPattern(editSlot());
-        if (!p || !((p->trigs[t] >> s) & 1)) { if (first) flash("NO TRIG"); return; }   // a lock belongs to a trig
+        if (!p || !(((p->trigs[t] | p->lockTrigs[t]) >> s) & 1)) { if (first) flash("NO TRIG"); return; }   // a lock belongs to a trig (or a trigless lock)
         bool full = false;
         doEdit(editSlot(), "lock lane", [&](mnm::mddump::Pattern& x) { full = !x.setLock(t, q, s, v); }, 20000 + (m_paintStroke & 0xFFFF));
         flash(full ? juce::String("LOCKFULL") : laneName() + " " + juce::String(v));
@@ -194,7 +233,7 @@ void MdEditor::wireKeys()
         if (s0 == s1) return;
         doEdit(editSlot(), "lock ramp", [&](mnm::mddump::Pattern& x) {
             for (int s = juce::jmin(s0, s1); s <= juce::jmax(s0, s1); ++s)
-                if ((x.trigs[t] >> s) & 1) x.setLock(t, q, s, juce::jlimit(0, 127, v0 + int(std::lround(double(v1 - v0) * (s - s0) / (s1 - s0)))));
+                if (((x.trigs[t] | x.lockTrigs[t]) >> s) & 1) x.setLock(t, q, s, juce::jlimit(0, 127, v0 + int(std::lround(double(v1 - v0) * (s - s0) / (s1 - s0)))));
         }, 20000 + (m_paintStroke & 0xFFFF));
         flash(juce::String(v0) + ">" + juce::String(v1));
     };
@@ -207,7 +246,7 @@ void MdEditor::wireKeys()
     m_keys.onLaneWheel = [this](int s, int delta) {
         const int t = m_track, q = m_laneParam;
         const auto p = m_proc.bankPattern(editSlot());
-        if (!p || !((p->trigs[t] >> s) & 1)) { flash("NO TRIG"); return; }
+        if (!p || !(((p->trigs[t] | p->lockTrigs[t]) >> s) & 1)) { flash("NO TRIG"); return; }
         const int row = p->lockRow(t, q);
         const int v = juce::jlimit(0, 127, (row >= 0 && p->locks[row][s] <= 127 ? int(p->locks[row][s]) : laneKitValue()) + delta);
         doEdit(editSlot(), "lock lane", [&](mnm::mddump::Pattern& x) { x.setLock(t, q, s, v); }, 45000 + s);

@@ -85,6 +85,7 @@ int main(int argc, char** argv)
     if (const char* v = std::getenv("MD_SEQ_TEST")) return test::mdSeqTest(env, v);
     if (const char* v = std::getenv("MD_GROUP_TEST")) return test::mdGroupTest(env, v);
     if (const char* v = std::getenv("MD_XTRA_TEST")) return test::mdXtraTest(env, v);
+    if (const char* v = std::getenv("MD_XTRA2_TEST")) return test::mdXtra2Test(env, v);
     if (const char* v = std::getenv("MD_TOOLS_TEST")) return test::mdToolsTest(env, v);
     if (const char* v = std::getenv("MD_BENCH")) return test::mdBench(env, v);
     if (const char* v = std::getenv("MD_DEMO")) return test::mdDemo(env, v);
@@ -394,7 +395,24 @@ int main(int argc, char** argv)
                     med->devExtraPaint(s, kind, true, true);
                     for (int k = 0; k < s / 4; ++k) med->devExtraWheel(s, kind, kind == 1 ? -5 : 3, false);
                 }
+                if (kind == 2) { med->devExtraAltWheel(4, 2, -4); med->devExtraAltWheel(8, 2, 3); }   // two fades: out 32, in 24
                 med->devMarkMode(kind + 4);
+                med->refresh();
+            }
+            if (const char* x2 = std::getenv("MD_UI_X2")) {   // dev: trigless locks on the trig keys ("trig"), or GENERATE's two generators ("gen")
+                if (auto* a = proc.apvts.getParameter(extrasId())) a->setValueNotifyingHost(1.0f);
+                med->showGrid(-1);
+                if (std::strcmp(x2, "gen") == 0) {
+                    med->keyPressed(juce::KeyPress('e'));
+                    med->devGenClick(4, false, false);
+                    med->devGenClick2(2);
+                    med->keyPressed(juce::KeyPress('b'));
+                    med->keyPressed(juce::KeyPress('b'));
+                } else {
+                    for (int s : {0, 4, 8, 12}) med->devStep(s);
+                    for (int s : {2, 10}) { med->devHold(s); med->devSynPage().devTurn(0, 100); }
+                    med->devHold(-1);
+                }
                 med->refresh();
             }
             if (std::getenv("MD_UI_LANE")) {   // dev: the LANE window with a ramp, the track 12 steps long, two steps held
