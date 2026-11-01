@@ -340,6 +340,9 @@ private:
     juce::ValueTree shadowsToTree() const;
     void shadowsFromTree(const juce::ValueTree& t);
     MachineKnobInfo m_knobInfo;
+public:
+    const MachineKnobInfo& knobInfo() const { return m_knobInfo; }   // dev/tests: every machine's knob labels and defaults
+private:
     std::array<int, kNumMachines> m_idOfIndex{};
 
     // engine-rate (44.1 kHz) output FIFO: the six DAC channels, then the per-track outputs (L/R per track), and

@@ -72,7 +72,9 @@ struct Writer {
 
 int mdDemo(TestEnv& env, const char* value)
 {
-    if (std::strcmp(value, "footwork") != 0) { std::printf("MD_DEMO: footwork\n"); return 2; }
+    if (std::strcmp(value, "reel") == 0) return mdDemoReel(env, 1);
+    if (std::strcmp(value, "reel2") == 0) return mdDemoReel(env, 2);
+    if (std::strcmp(value, "footwork") != 0) { std::printf("MD_DEMO: footwork | reel | reel2\n"); return 2; }
     const double rate = 44100.0, bpm = 160.0;
     const int block = 512;
     struct Head : juce::AudioPlayHead {

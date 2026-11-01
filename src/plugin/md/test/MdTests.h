@@ -28,6 +28,7 @@ int mdRateTest(TestEnv& env, const char* value);
 int mdParityTest(TestEnv& env, const char* value);
 int mdXtraTest(TestEnv& env, const char* value);
 int mdXtra2Test(TestEnv& env, const char* value);
+int mdDemoReel(TestEnv& env, int which);   // MD_DEMO=reel / reel2
 int mdToolsTest(TestEnv& env, const char* value);
 int mdInputTest(TestEnv& env, const char* value);
 int mdTickTest(TestEnv& env, const char* value);

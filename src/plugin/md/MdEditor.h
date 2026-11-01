@@ -260,6 +260,8 @@ public:
     void devOpenSamples() { openSamplePanel(); }
     juce::String devImportClip(const juce::File& f, int onlyTrack) { return importMidiClip(f, onlyTrack); }
     void devToggleMixer() { toggleMixer(); }
+    bool devMixerOpen() const { return m_mixer.isVisible(); }
+    juce::Rectangle<int> devKeysArea() const { return m_keys.getBounds(); }   // dev/video: where the trig keys are
     MdMixer& devMixer() { return m_mixer; }
     bool devGridOn() const { return m_gridOn; }
     const MdTrackKeys& devKeys() const { return m_keys; }
