@@ -266,6 +266,60 @@ int mdXtra2Test(TestEnv& env, const char* value)
         const bool falls = faded[2] < 0.8 * flat[2] && faded[5] < 0.4 * flat[5] && faded[7] < 0.1 * flat[7];
         check(flat[0] > 0.0 && firstSame && falls, "a fade of -63 is heard: the first hit as without it, then quieter to silence");
     }
+    // ---- a pattern's kit that changes a track's machine: the new machine is silent until that track's first trig
+    // (it would otherwise play what the machine before left in the voice: here a cymbal's memory as an E12 clap, a buzz)
+    {
+        struct Head : juce::AudioPlayHead {
+            double ppq = 0;
+            juce::Optional<PositionInfo> getPosition() const override { PositionInfo q; q.setPpqPosition(ppq); q.setBpm(120); q.setIsPlaying(true); return q; }
+        } head;
+        auto q = std::make_unique<MdProcessor>();
+        q->setFirmwarePath(juce::String(env.argv[1]), false);
+        q->setPlayHead(&head);
+        q->setPlayConfigDetails(0, 2, env.rate, env.block);
+        q->prepareToPlay(env.rate, env.block);
+        dd::Dump d;
+        // as the reel that found it: T9 plays a TRX open hat (A01), then sits silent as the default kit's TRX cymbal (A02),
+        // then becomes an E12 clap played from step 5 (A03)
+        auto a = q->captureMdKit();
+        for (auto& l : a.levels) l = 0;
+        a.levels[0] = 100;
+        a.position = 0;
+        auto c = a; c.position = 1;   // A02's kit: T9 the cymbal, level 0
+        a.models[8] = 23; a.levels[8] = 90;   // A01's: T9 an open hat, heard
+        auto b = c; b.position = 2;
+        b.models[8] = 52;
+        const uint8_t clap[8] = {64, 60, 0, 0, 0, 0, 64, 64};
+        for (int k = 0; k < 8; ++k) b.params[8][k] = clap[k];
+        b.levels[8] = 110;
+        d.kits = {a, c, b};
+        auto pa = blank(0, 16); pa.kit = 0; pa.trigs[0] = bits({0, 8}); pa.trigs[8] = bits({2, 6, 10, 14});
+        auto pc = blank(1, 16); pc.kit = 1; pc.trigs[0] = bits({0, 8});
+        auto pb = blank(2, 16); pb.kit = 2; pb.trigs[8] = bits({4});   // the clap on step 5, nothing on T9 before
+        d.patterns = {pa, pc, pb};
+        q->loadMdKit("a", a, "A");
+        q->setPatternBank("test", "TEST", d, 0);
+        for (auto [id, v] : {std::pair{seqId(), 1.0f}, std::pair{patternId(), 0.0f}})
+            if (auto* pr = q->apvts.getParameter(id)) pr->setValueNotifyingHost(pr->convertTo0to1(v));
+        q->setChain({0, 1, 2});
+        const double spc = env.rate * 60.0 / 120.0 / 24.0;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf(2, env.block);
+        for (int i = 0; i < int(96 * 3.5 * spc / env.block); ++i) {   // A01, A02, then A03 to its step 9
+            juce::MidiBuffer midi; buf.clear(); q->processBlock(buf, midi);
+            head.ppq += env.block / spc / 24.0;
+            q->syncMachineSideEffects();
+            out.insert(out.end(), buf.getReadPointer(0), buf.getReadPointer(0) + env.block);
+        }
+        auto rms = [&](double c0, double c1) {
+            double e = 0; int n = 0;
+            for (int k = int(c0 * spc); k < int(c1 * spc) && k < int(out.size()); ++k) { e += double(out[size_t(k)]) * out[size_t(k)]; ++n; }
+            return n ? std::sqrt(e / n) : 0.0;
+        };
+        const double before = rms(192 + 1, 192 + 23), clapped = rms(192 + 24, 192 + 36);   // A03's steps 1-4, then from its clap
+        std::printf("  (A03 before its clap %.5f, from its clap %.5f)\n", before, clapped);
+        check(clapped > 0.01 && before < clapped * 0.01, "a machine a pattern's kit brings stays silent until it is trigged");
+    }
     std::printf(fails ? "XTRA2 TEST FAILED (%d)\n" : "XTRA2 TEST OK\n", fails);
     return fails ? 1 : 0;
 }

@@ -16,6 +16,7 @@ void Engine::trig(int t, int machine, int accent)
     m_voices->trig(t, machine + 1);
     m_cpu->lfoTrig(t);
     m_tracks[size_t(t)].trigPending = true;   // the next conversion is the trig tick's (the whole packet)
+    m_tracks[size_t(t)].awaitTrig = false;
     m_tracks[size_t(t)].accent = accent;
     groupTrig(t);
 }
@@ -69,6 +70,8 @@ void Engine::refresh()
         const bool trigTick = st.trigPending;
         st.trigPending = false;
         if (trigTick || snap || id != st.sentMachine || syn != st.synSent) {
+            const bool listens = (id >= 80 && id <= 85) || (id >= 160 && id <= 168);   // INP / RAM: sound without a trig
+            if (id != st.sentMachine && st.sentMachine >= 0 && !trigTick && !listens) st.awaitTrig = true;
             st.sentMachine = id; st.synSent = syn;
             if (const auto* m = m_fw.byId(id)) {
                 std::array<uint16_t, 8> raw{};
@@ -83,14 +86,15 @@ void Engine::refresh()
         for (int k = 0; k < 13; ++k) mix[size_t(k)] = m_cpu->liveParam(t, 8 + k);   // AMD..SRR DIST, VOL PAN DEL REV
         mix[13] = m_cpu->liveLevel(t);
         const int route = st.target.route < 0 ? 0 : st.target.route > 6 ? 6 : st.target.route;
-        if (snap || mix != st.mixSent || route != st.sentRoute || st.accent != st.sentAccent || st.groupMuted != st.sentGroupMuted) {
+        if (snap || mix != st.mixSent || route != st.sentRoute || st.accent != st.sentAccent || st.groupMuted != st.sentGroupMuted
+            || st.awaitTrig != st.sentAwaitTrig) {
             std::array<uint16_t, 9> fx{};
             for (int k = 0; k < 9; ++k) fx[size_t(k)] = uint16_t(mix[size_t(k)]);
             m_mixer->setTrackFx(t, fx);
             auto words = MixEngine::routingWords(uint32_t(mix[13]), uint32_t(mix[9]), uint32_t(mix[10]), uint32_t(mix[12]), uint32_t(mix[11]), route, st.accent);
-            if (st.groupMuted) std::fill(words.begin() + 1, words.end(), 0u);   // muted by its mute group: the route stays
+            if (st.groupMuted || st.awaitTrig) std::fill(words.begin() + 1, words.end(), 0u);   // muted (its mute group, a new machine not trigged yet): the route stays
             m_mixer->setRouting(t, words);
-            st.mixSent = mix; st.sentRoute = route; st.sentAccent = st.accent; st.sentGroupMuted = st.groupMuted;
+            st.mixSent = mix; st.sentRoute = route; st.sentAccent = st.accent; st.sentGroupMuted = st.groupMuted; st.sentAwaitTrig = st.awaitTrig;
         }
     }
     // master effects (the delay also follows the tempo)

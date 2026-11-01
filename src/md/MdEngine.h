@@ -74,6 +74,9 @@ private:
         int accent = -128, sentAccent = 0, sentMachine = -1, sentRoute = -1;
         bool trigPending = false;
         bool groupMuted = false, sentGroupMuted = false;
+        // a machine changed with no trig (a kit a pattern brings, a pick): the voice holds what the machine before left
+        // in its memory, which the new one would play as noise; the track stays out of the mix until it is trigged
+        bool awaitTrig = false, sentAwaitTrig = false;
         std::array<int, 8> synSent{};
         std::array<int, 14> mixSent{};
     };
