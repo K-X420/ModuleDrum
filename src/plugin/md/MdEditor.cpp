@@ -675,16 +675,19 @@ void MdEditor::resized()
     header.removeFromLeft(8);
     m_machineBlock.setBounds(header.getX(), top, m_machineBlock.preferredWidth(), MdMachineBlock::kLcdH * kScale);
     auto headerTop = header.removeFromTop(30);
+    const int barGap = 8;   // the one gap between the header's separate controls (MdKitStrip / MdSeqBar's kGap at 2x)
+    headerTop.removeFromRight((headerTop.getRight() - (m_machineBlock.getRight() + 12)) % MdSeqBar::kS);   // MENU and SYNC on whole bar pixels, so STEP and GRID|MIX line up under them exactly
     m_menuButton.setBounds(headerTop.removeFromRight(32 * kScale));
-    headerTop.removeFromRight(10);
+    headerTop.removeFromRight(barGap);
     m_bpmSync.setBounds(headerTop.removeFromRight(28 * kScale));
-    headerTop.removeFromRight(8);
-    m_bpm.setBounds(headerTop.removeFromRight(62 * kScale));   // "120.0" in the tall digit face is 59 px
-    m_bpmLabel.setBounds(headerTop.removeFromRight(22 * kScale));
-    {   // the kit strip: centred between the machine block and MENU, as wide as that leaves
-        const int x0 = m_machineBlock.getRight() + 12, x1 = m_bpmLabel.getX() - 4;
-        const int w = m_strip.preferredWidth(juce::jmax(0, x1 - x0));
-        m_strip.setBounds(x0 + (x1 - x0 - w) / 2, top, w, MdKitStrip::kLcdH * MdKitStrip::kS);
+    headerTop.removeFromRight(barGap);
+    m_bpm.setBounds(headerTop.removeFromRight(LcdCanvas::tallDigitsWidth("888.8") * kScale));   // as wide as the widest tempo
+    headerTop.removeFromRight(2 * kScale);
+    m_bpmLabel.setBounds(headerTop.removeFromRight((LcdCanvas::textWidth(spec::kFontBold8, "BPM") + 2) * kScale));   // +2: the last glyph can draw past its advance
+    {   // the kit strip: from the machine block to BPM (the sound selector takes what is left)
+        const int x0 = m_machineBlock.getRight() + 12, x1 = m_bpmLabel.getX() - barGap;   // from where the sequencer bar starts
+        const int w = m_strip.preferredWidth(juce::jmax(0, x1 - x0)) / MdKitStrip::kS * MdKitStrip::kS;
+        m_strip.setBounds(x0, top, w, MdKitStrip::kLcdH * MdKitStrip::kS);
     }
     {   // without an OS file: the notice and its button beside the machine block
         auto s = headerTop.withLeft(m_machineBlock.getRight() + 16);

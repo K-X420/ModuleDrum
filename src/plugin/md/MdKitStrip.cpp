@@ -8,6 +8,10 @@ namespace mnm::plugin::md {
 using namespace one;   // LcdCanvas and the LcdDraw helpers
 namespace spec = mnm::uispec;
 
+// the bold face (8 rows) in a 15-row box: one row nearer the top than the bottom (it cannot be centred exactly; a
+// row high reads centred, a row low reads sunk)
+static constexpr int kBoldY = 3;
+
 void MdKitStrip::setKit(const juce::String& name, bool modified)
 {
     const auto n = name.isEmpty() ? juce::String("DEFAULT") : name.toUpperCase();
@@ -27,9 +31,10 @@ void MdKitStrip::setSound(int track, const juce::String& name, bool modified)
 void MdKitStrip::resized()
 {
     // joined parts share their edges; the kit and the sound are two strips with a gap between
-    const int w = getWidth() / kS, arrowW = 12, iconW = 15, gap = 6;
+    // the kit selector is as wide as PLAY|REC under it needs to leave the sequencer bar room; the sound selector takes the rest
+    const int w = getWidth() / kS, arrowW = 12, iconW = 15, gap = 4;
     const int fixed = 2 * (2 * (arrowW - 1) + (iconW - 1)) + gap + (iconW - 1);
-    const int kitW = (w - fixed) / 2, soundW = w - fixed - kitW;
+    const int kitW = juce::jmin(66, (w - fixed) / 2), soundW = w - fixed - kitW;
     int x = 0;
     auto take = [&](Part p, int pw) { m_rects[size_t(p)] = {x, 0, pw, kLcdH}; x += pw - 1; };
     take(KitPrev, arrowW); take(Kit, kitW); take(KitNext, arrowW); take(KitSave, iconW);
@@ -53,7 +58,7 @@ void MdKitStrip::paint(juce::Graphics& g)
         const int lw = LcdCanvas::textWidth(spec::kFontTiny3x5, label.toRawUTF8());
         cv.text(spec::kFontTiny3x5, label.toRawUTF8(), r.getX() + 4, r.getY() + 5, !open);
         const int nx = r.getX() + 4 + lw + 4, maxW = r.getRight() - 10 - nx;
-        textMarked(cv, spec::kFontBold8, fit(spec::kFontBold8, name, maxW - (modified ? 7 : 0)), nx, r.getY() + 4, !open, modified);
+        textMarked(cv, spec::kFontBold8, fit(spec::kFontBold8, name, maxW - (modified ? 7 : 0)), nx, r.getY() + kBoldY, !open, modified);
         caret(cv, r.getRight() - 9, r.getY() + 6, open, !open);
     };
     auto arrows = [&](Part prev, Part next) {

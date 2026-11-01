@@ -431,6 +431,28 @@ int main(int argc, char** argv)
             if (std::getenv("MD_UI_ABOUT")) med->showAbout();
             if (std::getenv("MD_UI_SKIN")) med->showSkinDialog();
             if (const char* tab = std::getenv("MD_UI_PANEL")) med->showLibrary(std::atoi(tab));   // 0 sounds, 1 kits, 2 patterns          // the kit list open under the header
+            if (const char* bar = std::getenv("MD_UI_BAR")) {   // dev: the sequencer bar playing, "step,length,row[,flash[,gridPage]]" (1-based; row / gridPage 0 = none)
+                const auto v = juce::StringArray::fromTokens(bar, ",", "");
+                MdSeqBar::State s;
+                s.playing = true; s.beat = true; s.empty = false; s.machine = "BD";
+                s.step = v[0].getIntValue() - 1; s.length = juce::jmax(1, v[1].getIntValue()); s.row = v[2].getIntValue() - 1;
+                s.flash = v[3];
+                if (v[4].getIntValue() > 0) { s.grid = true; s.page = v[4].getIntValue() - 1; }   // [,gridPage]: GRID on, that page underlined
+                for (auto* c : med->getChildren()) if (auto* sb = dynamic_cast<MdSeqBar*>(c)) sb->setState(s);
+            }
+            if (const char* km = std::getenv("MD_UI_KEYS")) {   // dev: GRID on page 3 with the widest values, locks and fades ("<mark>": 0 trigs, 4 COND, 5 TIME, 6 RTRG)
+                MdTrackKeys::Grid g;
+                g.on = true; g.page = 2; g.length = 64; g.mark = std::atoi(km); g.play = 38;
+                for (int s = 32; s < 48; ++s) if (s != 41 && s != 42 && s != 43) g.trigs |= uint64_t(1) << s;
+                for (int s : {32, 33, 35, 39, 40, 47}) g.locks |= uint64_t(1) << s;
+                g.lockTrigs = uint64_t(1) << 41;
+                const uint8_t conds[8] = {23, 21, 64, 1, 28, 25, 31, 22};
+                const int8_t micros[8] = {-23, 23, 6, -1, 12, -12, 3, -6};
+                const uint8_t retrigs[8] = {uint8_t(3 | 3 << 3), uint8_t(7 | 7 << 3), 1, uint8_t(6 | 1 << 3), 2, 5, uint8_t(4 | 2 << 3), 7};
+                const int8_t fades[8] = {-50, 63, 0, -8, 32, 0, -63, 12};
+                for (int i = 0; i < 8; ++i) { g.cond[size_t(32 + i)] = conds[i]; g.micro[size_t(32 + i)] = micros[i]; g.retrig[size_t(32 + i)] = retrigs[i]; g.fade[size_t(32 + i)] = fades[i]; }
+                for (auto* c : med->getChildren()) if (auto* tk = dynamic_cast<MdTrackKeys*>(c)) tk->setGrid(g);
+            }
             if (const char* col = std::getenv("MNM_SNAPSHOT_COLORS")) {   // dev: "INK,PAPER" as RRGGBB: the snapshot in those colours (nothing saved)
                 juce::Colour ink, paper;
                 const auto parts = juce::StringArray::fromTokens(col, ",", "");

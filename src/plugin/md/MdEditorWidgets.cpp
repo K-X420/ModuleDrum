@@ -149,23 +149,26 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
         else dottedFrame(cv, r.getX(), r.getY(), r.getWidth(), r.getHeight());
         const bool ink = !trig;
         cv.text(spec::kFontBold8, juce::String(s + 1).toRawUTF8(), r.getX() + 3, r.getY() + 3, ink);
-        if (gr.mark > 0 && gr.mark < 7 && hasTrig) cv.fillRect(r.getCentreX() - 2, r.getBottom() - 8, 4, 4, ink);
+        const bool valueHere = extras && gr.extra(s) != 0;   // (a value is always on a trig: no trig dot under it)
+        if (gr.mark > 0 && gr.mark < 7 && hasTrig && !valueHere) cv.fillRect(r.getCentreX() - 2, r.getBottom() - 8, 4, 4, ink);
         if (gr.mark == 0 && ((gr.lockTrigs >> s) & 1)) {   // a trigless lock: a hollow box
             const int bx = r.getCentreX() - 3, by = r.getBottom() - 10;
             for (int c = 0; c < 7; ++c) { cv.set(bx + c, by, ink); cv.set(bx + c, by + 6, ink); cv.set(bx, by + c, ink); cv.set(bx + 6, by + c, ink); }
         }
         if (gr.mark == 7 && (i + 1 == gr.eu1 || i + 1 == gr.eu2))   // GENERATE: the generators' pulse counts
             cv.textCentred(spec::kFontTiny3x5, i + 1 == gr.eu1 && i + 1 == gr.eu2 ? "E12" : i + 1 == gr.eu1 ? "E1" : "E2", r.getX() + 1, r.getWidth() - 1, r.getBottom() - 7, ink);
-        if (extras && gr.extra(s) != 0) {   // the value: "50%", "+6", "1/64"
+        if (valueHere) {   // the value, a line each part so it fits the key: "50%" / "+6" / RETRIG "1/64", "X4" (its steps), "V-32" (its fade)
             const int v = gr.extra(s);
-            const std::string label = gr.mark == 4 ? mnm::mddump::conditionName(v)
-                                    : gr.mark == 5 ? (v > 0 ? "+" : "") + std::to_string(v)
-                                    : mnm::mddump::retrigName(uint8_t(v));
-            cv.textCentred(spec::kFontTiny3x5, label.c_str(), r.getX() + 1, r.getWidth() - 1, r.getY() + 15, ink);
-            if (gr.mark == 6 && gr.fade[size_t(s)] != 0) {   // the fade: V-32 (out) / V+32 (in)
-                const int f = gr.fade[size_t(s)];
-                cv.textCentred(spec::kFontTiny3x5, ("V" + std::string(f > 0 ? "+" : "") + std::to_string(f)).c_str(), r.getX() + 1, r.getWidth() - 1, r.getY() + 21, ink);
+            std::vector<std::string> lines;
+            if (gr.mark == 4) lines.push_back(mnm::mddump::conditionName(v));
+            else if (gr.mark == 5) lines.push_back((v > 0 ? "+" : "") + std::to_string(v));
+            else {
+                lines.push_back("1/" + std::to_string(16 * mnm::mddump::retrigHits(uint8_t(v))));
+                if (const int n = mnm::mddump::retrigSteps(uint8_t(v)); n > 1) lines.push_back("X" + std::to_string(n));   // (the tiny font is upper case)
+                if (const int f = gr.fade[size_t(s)]; f != 0) lines.push_back("V" + std::string(f > 0 ? "+" : "") + std::to_string(f));
             }
+            int y = r.getY() + 14;
+            for (const auto& l : lines) { cv.textCentred(spec::kFontTiny3x5, l.c_str(), r.getX() + 1, r.getWidth() - 1, y, ink); y += 7; }
         }
         else if (i == m_selected && !extras) {   // which track the steps are: its machine on its own key (T3: key 3), the others blank
             const int mi = juce::jlimit(0, kNumMachines - 1, m_machine[size_t(m_selected)]);
@@ -173,10 +176,8 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
             cv.textCentred(spec::kFontTiny3x5, shortOf(mi).toRawUTF8(), r.getX() + 1, r.getWidth() - 1, r.getY() + 19, ink);
         }
         const bool heldHere = ((gr.heldSet >> s) & 1) != 0;
-        if (((gr.locks >> s) & 1) && !heldHere) {   // locked: a crit burst in the corner
-            static const char* const burst[7] = {"#..#..#", ".#.#.#.", "..###..", "#######", "..###..", ".#.#.#.", "#..#..#"};
-            for (int y = 0; y < 7; ++y) for (int x = 0; x < 7; ++x) if (burst[y][x] == '#') cv.set(r.getRight() - 9 + x, r.getY() + 2 + y, ink);
-        }
+        if (((gr.locks >> s) & 1) && !heldHere)   // locked: a folded corner (solid on an empty key, cut out of a lit one), clear of the number
+            for (int y = 0; y < 5; ++y) cv.fillRect(r.getRight() - 5 + y, r.getY() + y, 5 - y, 1, ink);
         if (heldHere) {   // held for locks: paper, a heavy frame, LOCK
             cv.fillRect(r.getX(), r.getY(), r.getWidth(), r.getHeight(), false);
             cv.fillRect(r.getX(), r.getY(), r.getWidth(), 2, true); cv.fillRect(r.getX(), r.getBottom() - 2, r.getWidth(), 2, true);
