@@ -34,6 +34,11 @@ chained one after the other: an intro, the beat, the bass coming in, a two-bar b
 kit's machines with parameter locks, retrig rolls and a 12-step tom loop against the 16. It is written in code and
 rendered by the plugin: `src/plugin/md/test/MdDemo.cpp`.
 
+**Watch:** two 30-second videos, a genre on every pattern, each with its own kit, tempo and colours, also written in code
+and rendered by the plugin (`src/plugin/md/test/MdDemoReel.cpp`):
+[reel 1](docs/video/ModuleDrum-reel1.mp4) (ambient techno, future garage, dembow, Jersey club, footwork, jungle, drum and
+bass) and [reel 2](docs/video/ModuleDrum-reel2.mp4) (electro, UK garage, Latin club, amapiano, baile funk, trap).
+
 The Monomodule plugins, from the same repository:
 
 | | |
