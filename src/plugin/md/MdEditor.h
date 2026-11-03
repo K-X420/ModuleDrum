@@ -256,7 +256,7 @@ public:
     void devRedo() { redo(); }
     one::KnobPage& devSynPage() { return m_syn; }
     MdSongEditor& devSongEditor() { return m_songEd; }
-    void devOpenMidi() { openMidiPanel(); }
+    void devOpenMidi(int page = 0) { openMidiPanel(); m_midiPanel.setPage(page); }
     void devOpenSamples() { openSamplePanel(); }
     juce::String devImportClip(const juce::File& f, int onlyTrack) { return importMidiClip(f, onlyTrack); }
     void devToggleMixer() { toggleMixer(); }

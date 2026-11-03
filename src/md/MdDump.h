@@ -152,9 +152,9 @@ struct Global {
     // flags (the sync settings): 0x01 TEMPO IN external, 0x10 CTRL IN off (set = off), 0x20 TEMPO OUT, 0x40 CTRL OUT
     uint8_t baseChannel = 0, programChange = 0, trigMode = 0, flags = 0;
     bool ctrlIn() const { return (flags & 0x10) == 0; }
-    // Kept as read but not applied by the plugin: EXTENDED MODE, LOCAL (MIDI local control), and the audio inputs'
-    // trigger settings per input (A = 0, B = 1): the track each one triggers (16 = none), gate, sensitivity, and the
-    // levels it maps between (min / max). Factory globals: 16 16, 1 1, 0 0, 0 0, 127 127.
+    // EXTENDED MODE and LOCAL (MIDI local control): kept as read, not applied. The audio inputs' trigger settings per
+    // input (A = 0, B = 1): the track each one triggers (16 = none), gate, sensitivity, and the velocities it maps
+    // between (min / max); FROM PROJECT applies them. Factory globals: 16 16, 1 1, 0 0, 0 0, 127 127.
     bool extendedMode = false, localOn = true;
     uint8_t inputTrack[2] = {16, 16}, inputGate[2] = {1, 1}, inputSense[2] = {}, inputMin[2] = {}, inputMax[2] = {127, 127};
     int tempo = 120 * 24;

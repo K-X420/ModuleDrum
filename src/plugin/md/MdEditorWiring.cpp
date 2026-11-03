@@ -461,6 +461,9 @@ void MdEditor::wireMidiPanel()
         for (int n = 0; n < 128; ++n) { const int t = s.noteTrack[size_t(n)]; if (t >= 0 && t < kTracks && v.note[size_t(t)] < 0) v.note[size_t(t)] = n; }
         v.ptnMode = s.patternNoteMode;
         v.ctrlIn = s.ctrlIn ? 1 : 0;
+        v.tempoOut = s.tempoOut ? 1 : 0;
+        v.ctrlOut = s.ctrlOut ? 1 : 0;
+        v.inTrack = s.inTrack; v.inGate = s.inGate; v.inSense = s.inSense; v.inMin = s.inMin; v.inMax = s.inMax;
         for (int n = 0; n < 128; ++n) {
             const int a = s.noteAction[size_t(n)];
             if (a == MdProcessor::kStartNote && v.startNote < 0) v.startNote = n;
@@ -490,6 +493,9 @@ void MdEditor::wireMidiPanel()
         for (int t = 0; t < kTracks; ++t) if (v.note[size_t(t)] >= 0) s.noteTrack[size_t(v.note[size_t(t)])] = int8_t(t);
         s.patternNoteMode = v.ptnMode;
         s.ctrlIn = v.ctrlIn != 0;
+        s.tempoOut = v.tempoOut != 0;
+        s.ctrlOut = v.ctrlOut != 0;
+        s.inTrack = v.inTrack; s.inGate = v.inGate; s.inSense = v.inSense; s.inMin = v.inMin; s.inMax = v.inMax;
         if (v.ptnFrom != -2) {   // CUSTOM (a project's map) stays as it is until FROM is turned
             for (auto& a : s.noteAction) if (a >= 0 && a < 128) a = -1;
             for (int n = v.ptnFrom, k = 0; v.ptnFrom >= 0 && n < 128 && k < 16; ++n)
@@ -501,6 +507,7 @@ void MdEditor::wireMidiPanel()
         m_proc.setMidiSettings(s);
     };
     m_midiPanel.onLearn = [this] { m_proc.armLearn(); };
+    m_midiPanel.inputLevel = [this](int i) { return m_proc.inputLevel(i); };
     m_midiPanel.onLearnCancel = [this] { m_proc.cancelLearn(); };
     m_midiPanel.onDefault = [this] {
         auto s = MdProcessor::defaultMidiSettings();
@@ -517,11 +524,14 @@ void MdEditor::wireMidiPanel()
             juce::String what = "GLOBAL " + juce::String(g.position + 1) + ": channel " + (g.baseChannel < 16 ? juce::String(g.baseChannel + 1) : juce::String("OFF"));
             int mapped = 0; for (int n = 0; n < 128; ++n) if (g.trackOfNote(n) >= 0) ++mapped;
             what << ", " << mapped << " notes mapped";
+            int routed = 0; for (int t = 0; t < kTracks; ++t) if (g.routing[t] < kNumRoutes - 1) ++routed;
+            what << ", " << (routed ? juce::String(routed) + " tracks on A-F" : juce::String("all tracks on MAIN"));
             m.addItem(int(i) + 1, what);
         }
         m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&m_midiPanel), [this, globals](int r) {
             if (r <= 0 || r > int(globals.size())) return;
             m_proc.setMidiSettings(MdProcessor::fromGlobal(globals[size_t(r - 1)], m_proc.midiSettings()));
+            m_proc.applyGlobalRouting(globals[size_t(r - 1)]);   // the track outputs too: a global setting on the MD
             m_midiPanel.repaint();
         });
     };

@@ -24,6 +24,7 @@ int mdFourTest(TestEnv& env, const char* value);
 int mdMidiTest(TestEnv& env, const char* value);
 int mdCtrTest(TestEnv& env, const char* value);
 int mdOscheckTest(TestEnv& env, const char* value);
+int mdSyncTest(TestEnv& env, const char* value);
 int mdRateTest(TestEnv& env, const char* value);
 int mdParityTest(TestEnv& env, const char* value);
 int mdXtraTest(TestEnv& env, const char* value);

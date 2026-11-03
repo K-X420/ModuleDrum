@@ -134,6 +134,8 @@ public:
         int baseChannel = 0, programChange = 1, midiOut = 0, pcChannel = 0; std::array<int, 16> note{};
         int ptnMode = 1, ptnFrom = -1, ptnBank = 0, startNote = -1, stopNote = -1;
         int ctrlIn = 1;   // 1 ON, 0 OFF
+        int tempoOut = 0, ctrlOut = 0;   // MIDI clock out, START / STOP out (1 ON)
+        std::array<int, 2> inTrack{16, 16}, inGate{1, 1}, inSense{0, 0}, inMin{0, 0}, inMax{127, 127};   // INPUT TRIGS (A, B)
     };
     std::function<Values()> get;
     std::function<void(const Values&)> set;
@@ -146,6 +148,11 @@ public:
     std::function<void()> onLearn, onLearnCancel;
     int learning() const { return m_learn; }
     void learned(int note);
+    juce::String getTooltip() override;   // the cell under the mouse
+    // the second page, INPUT TRIGS (the MD's global input page): its level meters read inputLevel (0..1)
+    std::function<float(int)> inputLevel;
+    bool inputPage() const { return m_page == 1; }
+    void setPage(int p) { m_page = p & 1; repaint(); }
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed(const juce::KeyPress& k) override;
 private:
@@ -156,6 +163,7 @@ private:
     void change(int cell, int to);
     int cellValue(const Values& v, int c) const;
     int m_learn = -1;   // the cell waiting for a note
+    int m_page = 0;     // 0 MIDI, 1 INPUT TRIGS
     bool m_moved = false;
     int m_drag = -1, m_dragY = 0, m_dragV = 0;
 };

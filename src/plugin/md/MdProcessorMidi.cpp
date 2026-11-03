@@ -26,6 +26,12 @@ MdProcessor::MidiSettings MdProcessor::midiSettings() const
     for (int i = 0; i < 128; ++i) s.noteAction[size_t(i)] = m_noteAction[size_t(i)].load();
     s.patternNoteMode = m_ptnNoteMode.load();
     s.ctrlIn = m_ctrlIn.load();
+    s.tempoOut = m_tempoOut.load();
+    for (int i = 0; i < 2; ++i) {
+        s.inTrack[size_t(i)] = m_inTrig[i][0].load(); s.inGate[size_t(i)] = m_inTrig[i][1].load(); s.inSense[size_t(i)] = m_inTrig[i][2].load();
+        s.inMin[size_t(i)] = m_inTrig[i][3].load(); s.inMax[size_t(i)] = m_inTrig[i][4].load();
+    }
+    s.ctrlOut = m_ctrlOut.load();
     s.midiOut = m_midiOutMode.load();
     return s;
 }
@@ -43,6 +49,13 @@ void MdProcessor::setMidiSettings(const MidiSettings& s)
     m_pcChannel.store(juce::jlimit(0, 16, s.pcChannel));
     m_ptnNoteMode.store(juce::jlimit(0, 2, s.patternNoteMode));
     m_ctrlIn.store(s.ctrlIn);
+    m_tempoOut.store(s.tempoOut);
+    for (int i = 0; i < 2; ++i) {
+        m_inTrig[i][0].store(juce::jlimit(0, 16, s.inTrack[size_t(i)])); m_inTrig[i][1].store(juce::jlimit(0, 127, s.inGate[size_t(i)]));
+        m_inTrig[i][2].store(juce::jlimit(0, 127, s.inSense[size_t(i)])); m_inTrig[i][3].store(juce::jlimit(0, 127, s.inMin[size_t(i)]));
+        m_inTrig[i][4].store(juce::jlimit(0, 127, s.inMax[size_t(i)]));
+    }
+    m_ctrlOut.store(s.ctrlOut);
     for (int i = 0; i < 128; ++i) {
         const int a = s.noteAction[size_t(i)];
         const bool ok = s.noteTrack[size_t(i)] < 0 && ((a >= 0 && a < 128) || a == kStartNote || a == kStopNote);
@@ -64,7 +77,25 @@ MdProcessor::MidiSettings MdProcessor::fromGlobal(const mnm::mddump::Global& g, 
     }
     s.patternNoteMode = juce::jlimit(0, 2, int(g.trigMode));
     s.ctrlIn = g.ctrlIn();   // the global's CTRL IN (off: the host's play / stop don't run the sequencer)
+    s.tempoOut = (g.flags & 0x20) != 0;
+    s.ctrlOut = (g.flags & 0x40) != 0;
+    for (int i = 0; i < 2; ++i) {
+        s.inTrack[size_t(i)] = juce::jmin(16, int(g.inputTrack[i])); s.inGate[size_t(i)] = g.inputGate[i] & 127; s.inSense[size_t(i)] = g.inputSense[i] & 127;
+        s.inMin[size_t(i)] = g.inputMin[i] & 127; s.inMax[size_t(i)] = g.inputMax[i] & 127;
+    }
     return s;
+}
+
+// The global's routing bytes (MdDump Global: 0..5 = A..F, 6 = MAIN, the DSP1 route numbers) onto each track's OUT
+int MdProcessor::applyGlobalRouting(const mnm::mddump::Global& g)
+{
+    int off = 0;
+    for (int t = 0; t < kTracks; ++t) {
+        const int r = g.routing[t] < kNumRoutes ? g.routing[t] : kNumRoutes - 1;
+        if (auto* p = apvts.getParameter(routeId(t))) p->setValueNotifyingHost(p->convertTo0to1(float(r)));
+        if (r != kNumRoutes - 1) ++off;
+    }
+    return off;
 }
 
 // The CC map (relative to the base channel): channel + t / 4, CC [16, 40, 72, 96][t % 4] + p; level CC 8 + t % 4
@@ -132,6 +163,60 @@ void MdProcessor::patternNote(int note, bool on)
     choose(act);
     if (running) m_ptnJump = act;
     else { m_seqQueued = act; start(); }
+}
+
+void MdProcessor::midRealtime(int pos, uint8_t status)
+{
+    m_midiOut.addEvent(&status, 1, juce::jlimit(0, juce::jmax(0, m_blockLen - 1), pos));
+}
+
+// TEMPO OUT: a clock (F8) at each whole clock of the timeline in [from, to), from m_clockOutFrom on
+void MdProcessor::clockOut(double from, double to, double cps, int n)
+{
+    if (!m_tempoOut.load() || cps <= 0.0) return;
+    for (double k = juce::jmax(std::ceil(from - 1e-9), m_clockOutFrom); k < to - 1e-9; k += 1.0)
+        midRealtime(juce::jlimit(0, juce::jmax(0, n - 1), int((k - from) / cps)), 0xF8);
+}
+
+// INPUT TRIGS, as the OS does them once per 32-frame block:
+//   DSP1's meter (P:0x981): per input a one-pole envelope of |x| (env = 0.995 env + 0.005 |x|, 24-bit fractions,
+//   truncated), the block's level = its peak.
+//   MainOS 0x20909C (A then B): after a trig the input rests 16 blocks; otherwise when the level rose from the block
+//   before by more than gate^2 x 512, a trig: velocity = vmin + ((rise >> 7) x (vmax - vmin) x sens^2 (32-bit, as
+//   muls.l)) >> 20, capped at vmax only, the low byte kept; velocity 0 is a note-off (nothing on a drum track).
+//   The trig is the track's own (with its trig group), its velocity the volume (never an accent), muted tracks not;
+//   while recording it is recorded. It plays from the next block.
+void MdProcessor::inputTriggers()
+{
+    for (int i = 0; i < 2; ++i) {
+        auto& d = m_inDetect[size_t(i)];
+        int32_t peak = 0;
+        for (int k = 0; k < kBlock; ++k) {
+            const int32_t x = std::min(0x7FFFFF, std::abs(m_inBlock[size_t(2 * k + i)]));
+            d.env = int32_t((int64_t(d.env) * 0x7F5C29 + int64_t(x) * 0x00A3D7) >> 23);
+            peak = std::max(peak, d.env);
+        }
+        m_inPeakUi[size_t(i)].store(float(peak) / 8388607.0f);
+        const int track = m_inTrig[i][0].load();
+        if (d.cnt <= 15) ++d.cnt;
+        else if (track < kTracks) {
+            const int gate = m_inTrig[i][1].load(), sens = m_inTrig[i][2].load(), vmin = m_inTrig[i][3].load(), vmax = m_inTrig[i][4].load();
+            const int32_t rise = peak - d.prev - ((gate * gate) << 9);
+            if (rise > 0) {
+                const int32_t k = (vmax - vmin) * (sens * sens);
+                const int32_t p = int32_t(uint32_t(rise >> 7) * uint32_t(k));
+                const int32_t v = vmin + (p >> 20);
+                const int vel = uint8_t(v >= vmax ? vmax : v);
+                if (vel > 0 && vel < 128 && !silenced(track)) {
+                    const double at = double(m_fifoLen + kBlock);   // the next pass
+                    m_pending.push_back({track, at, vel, -1, true, true});
+                    recordTrig(track, m_seqClock0 + at / juce::jmax(1e-9, m_lastRatio) * m_seqCps, vel);
+                }
+                d.cnt = 0;
+            }
+        }
+        d.prev = peak;
+    }
 }
 
 void MdProcessor::midSend(int pos, uint8_t a, uint8_t b, int c)

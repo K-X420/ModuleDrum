@@ -172,12 +172,21 @@ public:
         std::array<int16_t, 128> noteAction{}; int patternNoteMode = 1;
         bool ctrlIn = true;   // CTRL IN (as the MD's): Ableton's play / stop run the sequencer; OFF: only PLAY does, at Ableton's
                               // tempo, and a stop in Ableton does not stop it (a sound module with the LFOs and delay in time)
+        // TEMPO OUT / CTRL OUT (as the MD's): MIDI clock out (24 a quarter note, also while stopped), and START / STOP /
+        // CONTINUE with the song position out
+        bool tempoOut = false, ctrlOut = false;
+        // INPUT TRIGS (as the MD's global input page), per input (0 = A, the side-chain's left; 1 = B, its right): the
+        // track it trigs (16 = none), GATE (the rise that trigs), SENS (the velocity's slope), VMIN, VMAX. Factory values.
+        std::array<int, 2> inTrack{16, 16}, inGate{1, 1}, inSense{0, 0}, inMin{0, 0}, inMax{127, 127};
     };
     static MidiSettings defaultMidiSettings();
     MidiSettings midiSettings() const;
     void setMidiSettings(const MidiSettings& s);
     std::vector<mnm::mddump::Global> bankGlobals() const { return m_bankGlobals; }   // the bank project's globals
     static MidiSettings fromGlobal(const mnm::mddump::Global& g, const MidiSettings& keep);
+    // The global's track outputs (on the MD the routing is a global setting, not the kit's) onto the OUT parameters
+    // (message thread). Returns how many tracks it moved off MAIN.
+    int applyGlobalRouting(const mnm::mddump::Global& g);
     void setBankProject(const juce::String& projectId, const juce::String& name) { m_bankProjectId = projectId; m_bankName = name; }
     bool bankHasPattern(int slot) const;
     // Pattern editing (message thread): the pattern of a slot (null: none), and an edit of it: fn changes a copy (an
@@ -363,7 +372,7 @@ private:
     std::array<int32_t, 64> m_inBlock{};
     // seq: index into m_seqTrigs (a sequencer trig with its locks / slides / accent), -1 = a MIDI note or the UI
     // seq: index into m_seqTrigs (a sequencer trig), -1 a note or the UI; echo: false for a MIDI note (not sent out again)
-    struct PendingTrig { int track; double enginePos; int velocity; int seq = -1; bool echo = true; };   // engine frames from the current FIFO read point
+    struct PendingTrig { int track; double enginePos; int velocity; int seq = -1; bool echo = true; bool volume = false; };   // volume: the velocity is the trig's volume whatever VEL MODE says (an input trig)   // engine frames from the current FIFO read point
     std::vector<PendingTrig> m_pending;
 
     // ---- pattern playback (audio thread unless noted)
@@ -406,6 +415,7 @@ private:
     std::atomic<int> m_songStart{0}, m_songCue{-1};
     std::atomic<bool> m_songRelocate{false};
     int m_chainPos = 0;   // audio thread: the chain's playing entry
+    std::atomic<float> m_songTempo{-1.0f};               // a SONG row's tempo, until the BPM parameter has it (internal PLAY only)
     std::atomic<int> m_programChange{-1};                // a MIDI program change for the message thread (PATTERN follows)
     bool m_seqRunning = false;
     double m_seqExpect = 0, m_seqClock0 = 0, m_seqCps = 0;   // clocks: the block's expected start, its start, per host sample
@@ -468,7 +478,20 @@ private:
     void trigLocks(int t, const mnm::md::SeqTrig* s, int pos = 0);   // a trig's locks and slides (none: a MIDI / UI trig releases them)
     // MIDI settings and out
     std::atomic<int> m_baseCh{0}, m_pcMode{1}, m_midiOutMode{0}, m_pcChannel{0}, m_ptnNoteMode{1};
-    std::atomic<bool> m_ctrlIn{true};
+    std::atomic<bool> m_ctrlIn{true}, m_tempoOut{false}, m_ctrlOut{false};
+    double m_freeClock = 0;     // TEMPO OUT while stopped: the clocks, free running at the tempo
+    double m_clockOutFrom = 0;  // the first clock to send after a START / CONTINUE (the song position's 16th)
+    void midRealtime(int pos, uint8_t status);
+    // INPUT TRIGS: settings (track, gate, sens, vmin, vmax per input) and the detector's state (MainOS 0x20909C)
+    std::atomic<int> m_inTrig[2][5] = {{16, 1, 0, 0, 127}, {16, 1, 0, 0, 127}};
+    struct InputDetect { int32_t env = 0, prev = 0; int cnt = 16; };
+    std::array<InputDetect, 2> m_inDetect{};
+    std::array<std::atomic<float>, 2> m_inPeakUi{};   // the last block's level (0..1), for the settings page
+    void inputTriggers();   // once per pass, on m_inBlock
+public:
+    float inputLevel(int i) const { return m_inPeakUi[size_t(i & 1)].load(); }
+private:
+    void clockOut(double from, double to, double cps, int n);
     std::atomic<float>* m_extended = nullptr;   // CLASSIC (0) / EXTENDED (1)
     bool extendedMode() const { return !m_extended || m_extended->load() >= 0.5f; }
     std::atomic<float>* m_extras = nullptr;     // EXTRAS off (0) / on (1)

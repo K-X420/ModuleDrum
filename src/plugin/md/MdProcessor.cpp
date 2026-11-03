@@ -222,7 +222,9 @@ void MdProcessor::refreshParameters()
 
 double MdProcessor::tempo() const
 {
-    const double t = m_bpmSync->load() >= 0.5f ? m_hostBpm.load() : double(m_bpm->load());
+    const bool synced = m_bpmSync->load() >= 0.5f;
+    const float row = m_songTempo.load();
+    const double t = synced ? m_hostBpm.load() : row > 0.0f ? double(row) : double(m_bpm->load());
     return t >= 20.0 && t <= 400.0 ? t : 120.0;
 }
 
@@ -259,6 +261,7 @@ void MdProcessor::runPass()
     for (auto& f : m_inFifo) std::copy(f.begin() + take, f.begin() + m_inLen, f.begin());
     m_inLen -= take;
     m_engine->setInput(m_inBlock.data());
+    inputTriggers();
     m_engine->setDirect(m_directMask.load());
     m_engine->render();
     for (int t = 0; t < kTracks; ++t) {
@@ -466,7 +469,7 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
         echo = pt.echo;
         // the accent factor (MainOS 0x20CD76 / 0x20B26C): a pattern trig: 0x80 + 2 x the pattern's ACCENT when accented;
         // a note: VOLUME mode = velocity, ACCENT mode = 0x80 + 2 x ACCENT at velocity >= 112
-        const int accent = s ? pt.velocity
+        const int accent = s || pt.volume ? pt.velocity
                          : int(std::lround(m_velMode->load())) == 0 ? pt.velocity
                          : pt.velocity >= 112 ? 0x80 + 2 * int(std::lround(m_accent->load())) : -128;
         fireOne(pt.track, pt.enginePos, accent, s);
@@ -596,6 +599,11 @@ void MdProcessor::handleAsyncUpdate()
         if (auto* p = apvts.getParameter(patternId())) p->setValueNotifyingHost(p->convertTo0to1(float(pc)));
         int expect = pc;
         m_ptnPending.compare_exchange_strong(expect, -1);
+    }
+    if (const float bpm = m_songTempo.load(); bpm > 0.0f) {   // a SONG row's tempo: BPM takes it (and keeps it, as the MD)
+        if (auto* p = apvts.getParameter(bpmId())) p->setValueNotifyingHost(p->convertTo0to1(bpm));
+        float expect = bpm;
+        m_songTempo.compare_exchange_strong(expect, -1.0f);
     }
     if (const int k = m_seqKitRequest.exchange(-1); k >= 0) {   // a pattern change brought this kit: the knobs take it
         const auto* kit = m_kitOverride.load();

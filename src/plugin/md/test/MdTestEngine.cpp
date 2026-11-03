@@ -205,6 +205,47 @@ int mdInputTest(TestEnv& env, const char* value)
             check(lost < 0.01, juce::String(rate / 1000.0, 1) + " kHz, buffer " + juce::String(block) + ": " + juce::String(lost * 100.0, 2)
                   + "% of the input lost (padded " + juce::String(p.devInputPadded()) + ", dropped " + juce::String(p.devInputDropped()) + ")");
         }
+    {   // INPUT TRIGS (MainOS 0x20909C): clicks on the left channel trig input A's track, with its hold-off
+        auto pHeap = std::make_unique<MdProcessor>();
+        auto& p = *pHeap;
+        p.setFirmwarePath(juce::String(env.argv[1]), false);
+        p.enableAllBuses();
+        const int block = 512;
+        p.setRateAndBufferSizeDetails(44100.0, block);
+        p.prepareToPlay(44100.0, block);
+        juce::AudioBuffer<float> buf(juce::jmax(p.getTotalNumOutputChannels(), p.getTotalNumInputChannels()), block);
+        // clicks (5 ms at the level) at 0.5 s, 1.0 s, another 4 ms after that one (inside the hold-off), and 1.5 s
+        const std::vector<int64_t> clicks{22050, 44100, 44100 + 176, 66150};
+        auto runClicks = [&](float amp, int ch) {
+            p.setTrigLogging(true);
+            int64_t at = 0;
+            for (int i = 0; i < int(2.0 * 44100 / block); ++i) {
+                buf.clear();
+                for (const auto c : clicks)
+                    for (int64_t k = juce::jmax<int64_t>(c, at); k < juce::jmin<int64_t>(c + 220, at + block); ++k) buf.setSample(ch, int(k - at), amp);
+                juce::MidiBuffer midi;
+                p.processBlock(buf, midi);
+                at += block;
+            }
+            std::vector<int64_t> hits;
+            for (const auto& l : p.trigLog()) if (l.track == 1) hits.push_back(l.sample);
+            return hits;
+        };
+        auto ms = MdProcessor::defaultMidiSettings();
+        ms.inTrack[0] = 1;   // A: T2, factory values else
+        p.setMidiSettings(ms);
+        check(runClicks(0.5f, 0).empty(), "INPUT TRIGS factory SENS 0 / VMIN 0: velocity 0, no trig (as the MD)");
+        ms.inGate[0] = 20; ms.inSense[0] = 40; ms.inMin[0] = 20;
+        p.setMidiSettings(ms);
+        const auto hits = runClicks(0.5f, 0);
+        juce::String at;
+        for (auto h : hits) at << " " << juce::String(h);
+        bool onTime = hits.size() == 3;
+        for (size_t i = 0; onTime && i < 3; ++i) { const int64_t want = clicks[i == 2 ? 3 : i]; onTime = hits[i] >= want && hits[i] - want < 200; }
+        check(onTime, "A on T2: a trig per click within 4.5 ms, the click 4 ms after another rests (at" + at + ")");
+        check(runClicks(0.5f, 1).empty(), "the right channel is B (off): nothing");
+        check(runClicks(0.0005f, 0).empty(), "a click under GATE 20: nothing");
+    }
     std::printf(fails ? "INPUT TEST FAILED (%d)\n" : "INPUT TEST OK\n", fails);
     return fails ? 1 : 0;
 }

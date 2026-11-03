@@ -572,7 +572,8 @@ void MdEditor::mouseDown(const juce::MouseEvent& e)
 void MdEditor::timerCallback()
 {
     if (m_muteQueue != 0 && !juce::ModifierKeys::currentModifiers.isShiftDown()) applyMuteQueue();   // Shift let go: the queued mutes flip together
-    if (m_midiPanel.learning() >= 0) if (const int n = m_proc.takeLearned(); n >= 0) m_midiPanel.learned(n);   // LEARN: the note played
+    if (m_midiPanel.learning() >= 0) if (const int n = m_proc.takeLearned(); n >= 0) m_midiPanel.learned(n);
+    if (m_midiPanel.isVisible() && m_midiPanel.inputPage()) m_midiPanel.repaint();   // the input meters   // LEARN: the note played
     // the LCD artwork follows the Monomachine OS file the other Monomodule plugins use
     if (const auto path = loadSharedOsPath(); path != m_artPath) {
         m_artPath = path;

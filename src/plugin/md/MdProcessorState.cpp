@@ -320,6 +320,13 @@ void MdProcessor::getStateInformation(juce::MemoryBlock& destData)
         g.setProperty("pcch", ms.pcChannel, nullptr);
         g.setProperty("pnm", ms.patternNoteMode, nullptr);
         g.setProperty("ctrlin", ms.ctrlIn, nullptr);
+        g.setProperty("tempoout", ms.tempoOut, nullptr);
+        g.setProperty("ctrlout", ms.ctrlOut, nullptr);
+        juce::String inp;   // INPUT TRIGS: A then B, track gate sens vmin vmax, two hex digits each
+        for (int i = 0; i < 2; ++i)
+            for (int v : {ms.inTrack[size_t(i)], ms.inGate[size_t(i)], ms.inSense[size_t(i)], ms.inMin[size_t(i)], ms.inMax[size_t(i)]})
+                inp << juce::String::toHexString(v & 0xFF).paddedLeft('0', 2);
+        g.setProperty("inputs", inp, nullptr);
         juce::String acts;
         for (int i = 0; i < 128; ++i) acts << juce::String::toHexString(int(uint16_t(ms.noteAction[size_t(i)]))).paddedLeft('0', 4);
         g.setProperty("acts", acts, nullptr);
@@ -374,6 +381,13 @@ void MdProcessor::setStateInformation(const void* data, int sizeInBytes)
         ms.pcChannel = int(g.getProperty("pcch", 0));
         ms.patternNoteMode = int(g.getProperty("pnm", 1));
         ms.ctrlIn = bool(g.getProperty("ctrlin", true));
+        ms.tempoOut = bool(g.getProperty("tempoout", false));
+        ms.ctrlOut = bool(g.getProperty("ctrlout", false));
+        if (const auto inp = g.getProperty("inputs").toString(); inp.length() == 20)
+            for (int i = 0; i < 2; ++i) {
+                auto at = [&](int k) { return inp.substring(2 * (5 * i + k), 2 * (5 * i + k) + 2).getHexValue32(); };
+                ms.inTrack[size_t(i)] = at(0); ms.inGate[size_t(i)] = at(1); ms.inSense[size_t(i)] = at(2); ms.inMin[size_t(i)] = at(3); ms.inMax[size_t(i)] = at(4);
+            }
         const auto acts = g.getProperty("acts").toString();
         if (acts.length() == 512)
             for (int i = 0; i < 128; ++i) ms.noteAction[size_t(i)] = int16_t(uint16_t(acts.substring(4 * i, 4 * i + 4).getHexValue32()));

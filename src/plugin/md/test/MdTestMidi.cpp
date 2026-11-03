@@ -586,4 +586,119 @@ int mdOscheckTest(TestEnv& env, const char* value)
     return fails ? 1 : 0;
 }
 
+// MD_SYNC_TEST: the global's track outputs onto OUT, TEMPO OUT / CTRL OUT (MIDI clock, start / stop / continue), and a
+// SONG row's tempo under the plugin's own PLAY
+int mdSyncTest(TestEnv& env, const char* value)
+{
+    char** argv = env.argv;
+    juce::ignoreUnused(value);
+    int fails = 0;
+    auto check = [&](bool ok, const juce::String& what) { std::printf("  %s %s\n", ok ? "ok  " : "FAIL", what.toRawUTF8()); fails += ok ? 0 : 1; };
+    struct Head : juce::AudioPlayHead {
+        double ppq = 0; bool playing = false;
+        juce::Optional<PositionInfo> getPosition() const override { PositionInfo q; q.setPpqPosition(ppq); q.setBpm(120); q.setIsPlaying(playing); return q; }
+    } head;
+    auto pHeap = std::make_unique<MdProcessor>();
+    auto& p = *pHeap;
+    p.setFirmwarePath(juce::String(argv[1]), false);
+    p.setPlayHead(&head);
+    const int blk = 480;
+    p.prepareToPlay(48000.0, blk);
+    juce::AudioBuffer<float> buf(2, blk);
+    int64_t clock = 0;
+    std::vector<std::pair<int64_t, juce::MidiMessage>> out;
+    auto run = [&](int blocks) {
+        for (int i = 0; i < blocks; ++i) {
+            buf.clear(); juce::MidiBuffer m;
+            p.processBlock(buf, m);
+            for (const auto e : m) out.push_back({clock + e.samplePosition, e.getMessage()});
+            clock += blk;
+            if (head.playing) head.ppq += blk / 48000.0 * 2.0;   // 120 BPM
+            p.syncMachineSideEffects();
+        }
+    };
+    auto setP = [&](const juce::String& id, float v) { if (auto* q = p.apvts.getParameter(id)) q->setValueNotifyingHost(q->convertTo0to1(v)); };
+    auto getP = [&](const juce::String& id) { return p.apvts.getRawParameterValue(id)->load(); };
+
+    // the global's routing bytes: 0..5 A..F, 6 MAIN (anything else MAIN)
+    {
+        mnm::mddump::Global g;
+        for (auto& r : g.routing) r = 6;
+        g.routing[0] = 2; g.routing[3] = 5; g.routing[7] = 0x7F;
+        setP(routeId(7), 1.0f);
+        const int moved = p.applyGlobalRouting(g);
+        check(moved == 2 && std::lround(getP(routeId(0))) == 2 && std::lround(getP(routeId(3))) == 5 && std::lround(getP(routeId(1))) == 6
+              && std::lround(getP(routeId(7))) == 6, "global routing: T1 on C, T4 on F, the rest (and a bad byte) on MAIN");
+        g.flags = 0x60;
+        const auto s = MdProcessor::fromGlobal(g, MdProcessor::defaultMidiSettings());
+        check(s.tempoOut && s.ctrlOut, "the global's TEMPO OUT (0x20) and CTRL OUT (0x40) flags");
+    }
+    run(40);
+    auto count = [&](uint8_t status, int64_t from, int64_t to) {
+        int c = 0;
+        for (const auto& [at, m] : out) if (at >= from && at < to && m.getRawDataSize() >= 1 && m.getRawData()[0] == status) ++c;
+        return c;
+    };
+    // nothing goes out with both off
+    out.clear(); clock = 0;
+    run(50);
+    check(count(0xF8, 0, clock) == 0, "TEMPO OUT off: no clock");
+    auto ms = MdProcessor::defaultMidiSettings(); ms.tempoOut = true; ms.ctrlOut = true;
+    p.setMidiSettings(ms);
+    // stopped: the clock runs at the tempo (120 BPM = 48 a second, 1000 samples apart)
+    out.clear(); clock = 0;
+    run(100);
+    check(std::abs(count(0xF8, 0, clock) - 48) <= 1, "stopped: 48 clocks a second at 120 BPM (" + juce::String(count(0xF8, 0, clock)) + ")");
+    // START at the top, then a clock every 1000 samples from the start
+    out.clear(); clock = 0; head.ppq = 0; head.playing = true;
+    run(100);
+    int64_t startAt = -1, firstClock = -1, lastClock = -1; int clocks = 0; bool even = true;
+    for (const auto& [at, m] : out) {
+        const uint8_t st = m.getRawData()[0];
+        if (st == 0xFA && startAt < 0) startAt = at;
+        if (st == 0xF8) { if (firstClock < 0) firstClock = at; else if (std::abs(at - lastClock - 1000) > 1) even = false; lastClock = at; ++clocks; }
+    }
+    check(startAt == 0 && firstClock == 0, "START at the top, the first clock with it (" + juce::String(startAt) + ", " + juce::String(firstClock) + ")");
+    check(std::abs(clocks - 48) <= 1 && even, "playing: 48 clocks a second, evenly spaced (" + juce::String(clocks) + ")");
+    check(count(0xFB, 0, clock) == 0 && count(0xFC, 0, clock) == 0, "no CONTINUE or STOP while it plays on");
+    // a locate (the host jumps to beat 8.3): STOP, the song position (the next 16th, beat 8.5 = 34) and CONTINUE
+    out.clear(); clock = 0; head.ppq = 8.3;
+    run(12);
+    int spp = -1;
+    for (const auto& [at, m] : out) if (m.getRawData()[0] == 0xF2 && m.getRawDataSize() >= 3) spp = m.getRawData()[1] | (m.getRawData()[2] << 7);
+    check(count(0xFC, 0, blk) == 1 && spp == 34 && count(0xFB, 0, blk) == 1, "a jump: STOP, SONG POSITION " + juce::String(spp) + " (want 34), CONTINUE");
+    int64_t afterJump = -1;
+    for (const auto& [at, m] : out) if (m.getRawData()[0] == 0xF8) { afterJump = at; break; }
+    check(std::abs(afterJump - 4800) <= 1, "the clocks go on from that 16th (first at " + juce::String(afterJump) + ", want 4800)");
+    // the transport stops: STOP once
+    out.clear(); clock = 0; head.playing = false;
+    run(10);
+    check(count(0xFC, 0, clock) == 1, "STOP when the transport stops");
+    ms.tempoOut = false; ms.ctrlOut = false; p.setMidiSettings(ms);
+
+    // SONG row tempo: row 0 = A01 at 150 BPM, row 1 = A01 with "--" (unchanged); the plugin's own PLAY, SYNC off
+    setP(bpmSyncId(), 0.0f); setP(bpmId(), 120.0f);
+    p.editPattern(0, [](mnm::mddump::Pattern& x) { x.length = 16; x.trigs[0] = 1; });
+    p.editSong(0, [](mnm::mddump::Song& s) {
+        mnm::mddump::SongRow r0; r0.bytes[0] = 0; r0.bytes[9] = 16; r0.bytes[6] = uint8_t((150 * 24) >> 8); r0.bytes[7] = uint8_t(150 * 24);
+        mnm::mddump::SongRow r1; r1.bytes[0] = 0; r1.bytes[9] = 16; r1.bytes[6] = r1.bytes[7] = 0xFF;
+        s.rows = {r0, r1};
+    });
+    setP(seqModeId(), 1.0f);
+    run(5);
+    p.setInternalPlay(true);
+    run(5);
+    check(std::abs(getP(bpmId()) - 150.0f) < 0.01f && std::abs(p.tempo() - 150.0) < 0.01, "a row's tempo sets BPM (" + juce::String(getP(bpmId())) + ")");
+    run(200);   // A01 at 150 BPM = 1.6 s: into row 1, which keeps it
+    check(p.seqSongRow() == 1 && std::abs(getP(bpmId()) - 150.0f) < 0.01f, "row 1 (--) keeps it (row " + juce::String(p.seqSongRow()) + ", " + juce::String(getP(bpmId())) + ")");
+    p.setInternalPlay(false); run(3);
+    // the host's transport: its tempo rules, BPM stays
+    setP(bpmId(), 120.0f);
+    head.ppq = 0; head.playing = true; run(10);
+    check(std::abs(getP(bpmId()) - 120.0f) < 0.01f, "under the host's transport a row's tempo is not taken");
+    head.playing = false; run(3);
+    std::printf(fails ? "SYNC TEST FAILED (%d)\n" : "SYNC TEST OK\n", fails);
+    return fails ? 1 : 0;
+}
+
 } // namespace mnm::plugin::md::test

@@ -240,7 +240,8 @@ void MdProcessor::seqStart(Segment& seg, int slot, int start, int end, int64_t s
 }
 
 // SONG rows (MdDump SongRow): pattern 0..127 (0xFE LOOP, 0xFF END, 0xFD skipped), -, repeats - 1, the LOOP's target
-// row, the muted tracks (16 bits, track 1 = bit 0), the tempo (the host's tempo rules here), start step, end step
+// row, the muted tracks (16 bits, track 1 = bit 0), the tempo (BPM x 24, 0xFFFF = unchanged; it sets BPM, so only the
+// plugin's own PLAY with SYNC off follows it: a host's tempo rules its transport), start step, end step
 // (exclusive). As the OS's song walker (MainOS 0x23D998): a LOOP row jumps back to its target as often as it says
 // (0 = forever), a LOOP onto itself is HALT (the song ends), END or the rows running out end it; an empty pattern slot
 // plays as an empty pattern.
@@ -281,6 +282,10 @@ void MdProcessor::seqNext(double origin, const SeqBank* bank, const std::shared_
         m_seg.steps = int64_t(m_seg.player.span()) * (int(r[2]) + 1);
         m_seg.row = row;
         m_seqRowUi.store(row);
+        if (const int tempo = (r[6] << 8) | r[7]; tempo != 0xFFFF && tempo >= 30 * 24 && m_intWas && m_bpmSync->load() < 0.5f) {
+            const float bpm = float(juce::jlimit(30.0, 300.0, tempo / 24.0));
+            if (std::abs(bpm - m_bpm->load()) > 1e-3f || m_songTempo.load() > 0.0f) { m_songTempo.store(bpm); triggerAsyncUpdate(); }
+        }
         return;
     }
     m_seg.valid = false;   // the song has ended
@@ -390,6 +395,13 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
     if (!m_hostPlaying) m_seqHalted = false;   // a STOP lasts until the transport stops (or a START / pattern note)
     const bool on = m_seqOn->load() >= 0.5f && !m_seqHalted;   // with no bank, the pattern is empty: the steps still run
     if (!on || !m_hostPlaying) {   // stopped: PATTERN shows the next pattern at once; SONG starts over
+        if (m_seqRunning && m_ctrlOut.load()) midRealtime(0, 0xFC);   // CTRL OUT: STOP
+        {   // TEMPO OUT runs on while stopped, at the tempo
+            const double cpsFree = tempo() * 24.0 / 60.0 / m_hostRate;
+            m_clockOutFrom = 0;
+            clockOut(m_freeClock, m_freeClock + n * cpsFree, cpsFree, n);
+            m_freeClock += n * cpsFree;
+        }
         if (m_seqRunning) seqStop();
         m_prevSeg.valid = false;
         if (!song && (m_seqQueued >= 0 || m_seg.slot < 0)) {
@@ -407,6 +419,22 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
     m_seqCps = cps;
     const double c1 = c0 + n * cps;
     auto engineAt = [&](double clock) { return juce::jmax(0.0, (clock - c0) / cps * ratio); };
+    if (const bool jump = m_seqRunning && std::abs(c0 - m_seqExpect) > 0.25; !m_seqRunning || jump) {
+        // CTRL OUT: START from the top, else (a start or a jump elsewhere) STOP, the song position and CONTINUE; the
+        // clocks go on from the song position's 16th
+        m_clockOutFrom = c0 < 0.01 ? 0.0 : std::ceil(c0 / 6.0 - 1e-9) * 6.0;
+        if (m_ctrlOut.load()) {
+            if (jump) midRealtime(0, 0xFC);
+            if (m_clockOutFrom == 0.0) midRealtime(0, 0xFA);
+            else {
+                const int spp = juce::jlimit(0, 16383, int(m_clockOutFrom / 6.0));
+                midSend(0, 0xF2, uint8_t(spp & 0x7F), spp >> 7);
+                midRealtime(0, 0xFB);
+            }
+        }
+    }
+    clockOut(c0, c1, cps, n);
+    m_freeClock = c1;
     if (!m_seqRunning || relocate || std::abs(c0 - m_seqExpect) > 0.25) {   // start, a jump, a new mode / song / bank
         if (m_seqRunning) seqStop();
         m_seqRunning = true;

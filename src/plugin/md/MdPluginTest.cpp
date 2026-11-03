@@ -147,6 +147,7 @@ int main(int argc, char** argv)
         std::printf("RAM test: RAM-R1 records the kicks of bar 1, RAM-P1 plays them in bar 2\n");
     }
     if (const char* v = std::getenv("MD_OSCHECK_TEST")) return test::mdOscheckTest(env, v);
+    if (const char* v = std::getenv("MD_SYNC_TEST")) return test::mdSyncTest(env, v);
     if (const char* v = std::getenv("MD_RATE_TEST")) return test::mdRateTest(env, v);
     if (const char* v = std::getenv("MD_FOUR_TEST")) return test::mdFourTest(env, v);
     if (const char* v = std::getenv("MD_MIXER_TEST")) return test::mdMixerTest(env, v);
@@ -429,6 +430,7 @@ int main(int argc, char** argv)
             if (std::getenv("MD_UI_MIX")) { med->devToggleMixer(); med->refresh(); }   // dev: the mixer open
             if (std::getenv("MD_UI_KITS")) med->showKitList();
             if (std::getenv("MD_UI_ABOUT")) med->showAbout();
+            if (const char* mp = std::getenv("MD_UI_MIDI")) med->devOpenMidi(std::atoi(mp) > 1 ? 1 : 0);   // dev: the MIDI settings open
             if (std::getenv("MD_UI_SKIN")) med->showSkinDialog();
             if (const char* tab = std::getenv("MD_UI_PANEL")) med->showLibrary(std::atoi(tab));   // 0 sounds, 1 kits, 2 patterns          // the kit list open under the header
             if (const char* bar = std::getenv("MD_UI_BAR")) {   // dev: the sequencer bar playing, "step,length,row[,flash[,gridPage]]" (1-based; row / gridPage 0 = none)
