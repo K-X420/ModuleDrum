@@ -148,6 +148,28 @@ int MdEditor::editSlot() const
 
 void MdEditor::bindTrackPage(one::KnobPage& page, const spec::Param* params, std::function<juce::String(int)> id, std::function<int(int)> mdParam)
 {
+    if (m_heldScene >= 0) {   // a held scene: the knobs show and set its locks (a knob it doesn't lock shows the track's value)
+        const int t = m_track, sc = m_heldScene;
+        auto paramValue = [this, id](int k) {
+            if (auto* a = m_proc.apvts.getParameter(id(k))) return int(std::lround(a->convertFrom0to1(a->getValue())));
+            return 0;
+        };
+        page.bindCustom(params,
+            [this, t, sc, mdParam, paramValue](int k) {
+                const int p = mdParam(k);
+                const int v = p >= 0 ? m_proc.sceneValue(sc, MdProcessor::sceneSlotOf(t, p)) : -1;
+                return v >= 0 ? v : paramValue(k);
+            },
+            [this, t, sc, mdParam, id](int k, int v) {
+                const int p = mdParam(k);
+                if (p < 0) { if (auto* a = m_proc.apvts.getParameter(id(k))) a->setValueNotifyingHost(a->convertTo0to1(float(v))); return; }
+                m_proc.setSceneValue(sc, MdProcessor::sceneSlotOf(t, p), v);
+                refreshGrid();
+            },
+            [this, t, sc, mdParam](int k) { const int p = mdParam(k); if (p >= 0) m_proc.setSceneValue(sc, MdProcessor::sceneSlotOf(t, p), -1); refreshGrid(); },
+            [this, t, sc, mdParam](int k) { const int p = mdParam(k); return p >= 0 && m_proc.sceneValue(sc, MdProcessor::sceneSlotOf(t, p)) >= 0; });
+        return;
+    }
     if (m_heldStep < 0) { page.bind(params, id); return; }
     const int t = m_track, step = m_heldStep, slot = editSlot();   // (the first held step: the others take its edits)
     auto paramValue = [this, id](int k) {
@@ -352,7 +374,16 @@ void MdEditor::refreshGrid()
         if (m_flash.isNotEmpty() && juce::Time::getMillisecondCounter() > m_flashUntil) m_flash.clear();
         s.flash = m_flash;
         if (s.flash.isEmpty() && m_proc.fill()) s.flash = "FILL";
+        s.scenes = m_sceneMode;
+        s.sceneA = m_proc.sceneOf(false); s.sceneB = m_proc.sceneOf(true); s.xfade = m_proc.xfade();
         m_seqBar.setState(s);
+    }
+    {   // SCENES on the keys
+        MdTrackKeys::Scenes sc;
+        sc.on = m_sceneMode;
+        sc.a = m_proc.sceneOf(false); sc.b = m_proc.sceneOf(true); sc.held = m_heldScene; sc.x = m_proc.xfade();
+        for (int i = 0; i < kScenes; ++i) sc.locks[size_t(i)] = m_proc.sceneLocks(i);
+        m_keys.setScenes(sc);
     }
     MdTrackKeys::Grid g;
     g.on = m_gridOn;
@@ -454,7 +485,66 @@ void MdEditor::bindMasterFx(int fx)
     m_masterTab = fx;
     std::array<spec::Param, 8> params{};
     for (int k = 0; k < 8; ++k) params[size_t(k)] = masterParam(fx, k);
-    m_master.bind(params.data(), [fx](int k) { return masterFxId(fx, k); });
+    if (m_heldScene < 0) { m_master.bind(params.data(), [fx](int k) { return masterFxId(fx, k); }); return; }
+    const int sc = m_heldScene;   // a held scene: the master effects' knobs lock into it too
+    auto paramValue = [this, fx](int k) {
+        if (auto* a = m_proc.apvts.getParameter(masterFxId(fx, k))) return int(std::lround(a->convertFrom0to1(a->getValue())));
+        return 0;
+    };
+    m_master.bindCustom(params.data(),
+        [this, sc, fx, paramValue](int k) { const int v = m_proc.sceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k)); return v >= 0 ? v : paramValue(k); },
+        [this, sc, fx](int k, int v) { m_proc.setSceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k), v); refreshGrid(); },
+        [this, sc, fx](int k) { m_proc.setSceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k), -1); refreshGrid(); },
+        [this, sc, fx](int k) { return m_proc.sceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k)) >= 0; });
+}
+
+void MdEditor::toggleScenes()
+{
+    m_sceneMode = !m_sceneMode;
+    holdStep(-1);
+    if (!m_sceneMode) holdScene(-1);
+    flash(m_sceneMode ? "SCENES" : "TRACKS");
+    refreshGrid();
+}
+
+// A scene held for editing (-1: none): it plays whole, and the track pages and the master effects lock into it
+void MdEditor::holdScene(int s)
+{
+    if (s == m_heldScene) return;
+    m_heldScene = s;
+    m_proc.setSceneAudition(s);
+    const juce::String badge = s >= 0 ? "SCN" + juce::String(s + 1) : juce::String();   // (the master page's tabs leave no room for one)
+    for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->setBadge(s >= 0 ? badge.toRawUTF8() : nullptr);
+    m_shownMachineId = -2;
+    m_pagesMachineId = -2;
+    rebuildSynPage();
+    bindMasterFx(m_masterTab);
+    refreshGrid();
+}
+
+void MdEditor::sceneMenu(int s)
+{
+    const int n = m_proc.sceneLocks(s);
+    juce::PopupMenu m;
+    m.addSectionHeader("SCENE " + juce::String(s + 1) + (n ? " - " + juce::String(n) + (n == 1 ? " LOCK" : " LOCKS") : juce::String(" - EMPTY")));
+    m.addItem(1, m_heldScene == s ? "Release (stop editing)" : "Hold to edit (turn the knobs)");
+    m.addItem(2, "Put on A", true, m_proc.sceneOf(false) == s);
+    m.addItem(3, "Put on B", true, m_proc.sceneOf(true) == s);
+    m.addSeparator();
+    m.addItem(4, "Copy", n > 0);
+    m.addItem(5, "Paste", !m_sceneClip.empty());
+    m.addItem(6, "Clear", n > 0);
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&m_keys), [this, s](int r) {
+        auto setSide = [this](const juce::String& id, int v) { if (auto* a = m_proc.apvts.getParameter(id)) a->setValueNotifyingHost(a->convertTo0to1(float(v))); };
+        if (r == 1) holdScene(m_heldScene == s ? -1 : s);
+        else if (r == 2) setSide(sceneAId(), s + 1);
+        else if (r == 3) setSide(sceneBId(), s + 1);
+        else if (r == 4) { m_sceneClip = m_proc.sceneData(s); flash("COPIED SCN " + juce::String(s + 1)); }
+        else if (r == 5) { m_proc.setSceneData(s, m_sceneClip); flash("PASTED"); }
+        else if (r == 6) { m_proc.setSceneData(s, {}); flash("CLEARED"); }
+        if (r >= 4) { for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master}) pg->pull(); }
+        refreshGrid();
+    });
 }
 
 void MdEditor::setMachine(int index)
@@ -618,6 +708,7 @@ void MdEditor::timerCallback()
             }
             if (m_outTab == 1) m_out.pull();
             if (m_heldStep >= 0) for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
+            if (m_heldScene >= 0) for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master}) pg->pull();
             if (--m_ptnPoll <= 0) {   // the bank: its name on the panel, its empty slots marked
                 m_ptnPoll = 10;
                 const auto bn = m_proc.bankName();

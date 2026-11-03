@@ -145,6 +145,15 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
     }
     if (!mods.isAnyModifierKeyDown() && (k.getKeyCode() == 'G' || k.getKeyCode() == 'g')) { toggleGrid(); return true; }   // GRID on / off
     if (!mods.isAnyModifierKeyDown() && (k.getKeyCode() == 'M' || k.getKeyCode() == 'm')) { toggleMixer(); return true; }   // the mixer
+    if (!mods.isAnyModifierKeyDown() && (k.getKeyCode() == 'N' || k.getKeyCode() == 'n')) { toggleScenes(); return true; }   // SCENES
+    if (m_heldScene >= 0 && k.getKeyCode() == juce::KeyPress::escapeKey) { holdScene(-1); return true; }   // let the held scene go
+    if (m_heldScene >= 0 && (k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey)) {   // its locks go
+        m_proc.setSceneData(m_heldScene, {});
+        flash("SCENE CLEARED");
+        for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master}) pg->pull();
+        refreshGrid();
+        return true;
+    }
     const int page = juce::jlimit(0, 3, m_gridPage);
     if (m_gridOn && !mods.isAnyModifierKeyDown()) {   // A / S / W: accent / slide / swing marks for all tracks <-> per track
         const int code = k.getKeyCode();

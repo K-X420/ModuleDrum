@@ -586,4 +586,78 @@ int mdFourTest(TestEnv& env, const char* value)
     return fails ? 1 : 0;
 }
 
+// MD_SCENE_TEST: SCENES (the Octatrack's crossfader): the morph between A and B, a side without a lock, a held scene
+// playing whole, the master effects, the plugin state, and editing through the UI (a held scene's knobs)
+int mdSceneTest(TestEnv& env, const char* value)
+{
+    auto& proc = env.proc;
+    juce::ignoreUnused(value);
+    int fails = 0;
+    auto check = [&](bool ok, const juce::String& what) { std::printf("  %s %s\n", ok ? "ok  " : "FAIL", what.toRawUTF8()); fails += ok ? 0 : 1; };
+    juce::AudioBuffer<float> buf(juce::jmax(2, proc.getTotalNumOutputChannels()), env.block);
+    auto run = [&](int blocks) { for (int i = 0; i < blocks; ++i) { buf.clear(); juce::MidiBuffer m; proc.processBlock(buf, m); } };
+    auto setP = [&](const juce::String& id, float v) { if (auto* q = proc.apvts.getParameter(id)) q->setValueNotifyingHost(q->convertTo0to1(v)); };
+    setP(knobId(0, 0), 40.0f); setP(knobId(0, 1), 50.0f);
+    run(4);
+    check(proc.devSceneParam(0, 0) == 40, "no scenes: the knob's own value");
+    proc.setSceneValue(0, MdProcessor::sceneSlotOf(0, 0), 100);   // scene 1 (A): T1 PTCH 100, DEC 90
+    proc.setSceneValue(0, MdProcessor::sceneSlotOf(0, 1), 90);
+    proc.setSceneValue(1, MdProcessor::sceneSlotOf(0, 0), 20);    // scene 2 (B): T1 PTCH 20
+    check(proc.sceneLocks(0) == 2 && proc.sceneLocks(1) == 1, "lock counts: 2 and 1");
+    setP(xfadeId(), 0.0f); run(2);
+    check(proc.devSceneParam(0, 0) == 100 && proc.devSceneParam(0, 1) == 90, "XFADE 0: scene A's values");
+    setP(xfadeId(), 127.0f); run(2);
+    check(proc.devSceneParam(0, 0) == 20 && proc.devSceneParam(0, 1) == 50, "XFADE 127: B's PTCH, and DEC (B locks none) the knob's own");
+    setP(xfadeId(), 63.5f); run(2);
+    check(proc.devSceneParam(0, 0) == 60 && proc.devSceneParam(0, 1) == 70, "XFADE halfway: 60 and 70 (" + juce::String(proc.devSceneParam(0, 0)) + ", " + juce::String(proc.devSceneParam(0, 1)) + ")");
+    check(proc.devSceneParam(1, 0) == int(std::lround(proc.apvts.getRawParameterValue(knobId(1, 0))->load())), "a knob neither scene locks: untouched");
+    setP(knobId(0, 1), 10.0f); run(2);
+    check(proc.devSceneParam(0, 1) == 50, "the knob moves the side without a lock (90 to 10, halfway: 50)");
+    proc.setSceneAudition(1); run(2);
+    check(proc.devSceneParam(0, 0) == 20 && proc.devSceneParam(0, 1) == 10, "scene 2 held: it plays whole, whatever the fader");
+    proc.setSceneAudition(-1);
+    setP(sceneBId(), 3.0f); setP(xfadeId(), 127.0f); run(2);
+    check(proc.devSceneParam(0, 0) == 40, "B on an empty scene 3: XFADE 127 gives the knob back");
+    // the master effects
+    proc.setSceneValue(2, MdProcessor::sceneFxSlotOf(1, 2), 120);   // scene 3: DELAY's third knob
+    run(2);
+    check(proc.devSceneFx(1, 2) == 120, "a master effect locked in scene B (" + juce::String(proc.devSceneFx(1, 2)) + ")");
+    // the plugin state keeps them
+    juce::MemoryBlock st;
+    proc.getStateInformation(st);
+    {
+        auto other = std::make_unique<MdProcessor>();
+        other->setStateInformation(st.getData(), int(st.getSize()));
+        check(other->sceneValue(0, MdProcessor::sceneSlotOf(0, 0)) == 100 && other->sceneValue(1, MdProcessor::sceneSlotOf(0, 0)) == 20
+              && other->sceneValue(2, MdProcessor::sceneFxSlotOf(1, 2)) == 120 && other->sceneLocks(0) == 2 && other->sceneLocks(5) == 0,
+              "saved and restored with the plugin state");
+    }
+    // the UI: SCENES, scene 5 held, a turn of T1's PTCH locks it there (the knob's own value stays)
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
+        auto* med = dynamic_cast<MdEditor*>(ed.get());
+        med->devToggleScenes();
+        med->devHoldScene(4);
+        auto& syn = med->devSynPage();
+        for (int v = 60; v <= 77; ++v) syn.devTurn(0, v);
+        check(proc.sceneValue(4, MdProcessor::sceneSlotOf(0, 0)) == 77 && std::lround(proc.apvts.getRawParameterValue(knobId(0, 0))->load()) == 40,
+              "scene 5 held: a knob turn locks PTCH 77 in it, the knob itself stays 40");
+        check(syn.devMarked(0) && !syn.devMarked(1), "the locked knob's value box is marked");
+        run(2);
+        check(proc.devSceneParam(0, 0) == 77, "and the held scene plays whole");
+        syn.devReset(0);
+        check(proc.sceneValue(4, MdProcessor::sceneSlotOf(0, 0)) == -1, "double-click: that lock goes");
+        auto& master = med->devMasterPage();
+        master.devTurn(3, 99);
+        const auto d = proc.sceneData(4);
+        check(std::find(d.begin() + MdProcessor::sceneFxSlotOf(0, 0), d.end(), int8_t(99)) != d.end(), "a master effect knob locks into the held scene too");
+        med->devHoldScene(-1);
+        run(2);
+        check(proc.devSceneParam(0, 0) == 40, "released: back to the fader (A 1 / B 3 at 127: the knob)");
+        med->devToggleScenes();
+    }
+    std::printf(fails ? "SCENE TEST FAILED (%d)\n" : "SCENE TEST OK\n", fails);
+    return fails ? 1 : 0;
+}
+
 } // namespace mnm::plugin::md::test

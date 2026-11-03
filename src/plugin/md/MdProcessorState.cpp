@@ -341,6 +341,8 @@ void MdProcessor::getStateInformation(juce::MemoryBlock& destData)
     state.appendChild(samplesToTree(), nullptr);
     state.removeChild(state.getChildWithName("SHADOWS"), nullptr);
     state.appendChild(shadowsToTree(), nullptr);
+    state.removeChild(state.getChildWithName("SCENES"), nullptr);
+    state.appendChild(scenesToTree(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
@@ -374,6 +376,7 @@ void MdProcessor::setStateInformation(const void* data, int sizeInBytes)
     for (int t = 0; t < kTracks; ++t) m_sounds[size_t(t)] = {soundKeys[t], soundNames[t], soundHashes[t].toStdString()};
     samplesFromTree(apvts.state.getChildWithName("SAMPLES"));
     shadowsFromTree(apvts.state.getChildWithName("SHADOWS"));
+    scenesFromTree(apvts.state.getChildWithName("SCENES"));
     if (const auto g = apvts.state.getChildWithName("MIDI"); g.isValid()) {
         auto ms = defaultMidiSettings();
         ms.baseChannel = int(g.getProperty("base", 0));

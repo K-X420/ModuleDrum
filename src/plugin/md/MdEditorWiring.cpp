@@ -325,7 +325,7 @@ void MdEditor::wireSeqBar()
                 m_proc.setInternalPlay(on);
                 break;
             }
-            case MdSeqBar::Grid: toggleGrid(); break;
+            case MdSeqBar::Grid: if (m_sceneMode) toggleScenes(); else toggleGrid(); break;
             case MdSeqBar::Mix: toggleMixer(); break;
             case MdSeqBar::Edit: doublePattern(); return;
             case MdSeqBar::DelPg: deletePage(juce::jlimit(0, 3, m_gridPage)); return;
@@ -345,7 +345,16 @@ void MdEditor::wireSeqBar()
         refreshGrid();
     };
     m_seqBar.onDragOut = [this](MdSeqBar::Part p) { dragOutClip(p == MdSeqBar::Trk); };
+    m_seqBar.onXfade = [this](float v) {
+        if (auto* a = m_proc.apvts.getParameter(xfadeId())) a->setValueNotifyingHost(a->convertTo0to1(v));
+        refreshGrid();
+    };
+    m_keys.onSceneHold = [this](int s) { holdScene(m_heldScene == s ? -1 : s); };
+    m_keys.onSceneA = [this](int s) { if (auto* a = m_proc.apvts.getParameter(sceneAId())) a->setValueNotifyingHost(a->convertTo0to1(float(s + 1))); refreshGrid(); };
+    m_keys.onSceneB = [this](int s) { if (auto* a = m_proc.apvts.getParameter(sceneBId())) a->setValueNotifyingHost(a->convertTo0to1(float(s + 1))); refreshGrid(); };
+    m_keys.onSceneMenu = [this](int s) { sceneMenu(s); };
     m_seqBar.onEditClick = [this](MdSeqBar::Part p, int page, const juce::ModifierKeys& mods) {
+        if (p == MdSeqBar::Grid) { toggleScenes(); return; }   // Shift + GRID: SCENES
         if (p == MdSeqBar::PtnPrev || p == MdSeqBar::PtnNext) {   // Shift + the PTN arrows: the chain grows / shrinks
             if (!mods.isShiftDown()) return;
             auto ch = m_proc.chain();

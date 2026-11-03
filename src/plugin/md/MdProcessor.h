@@ -183,6 +183,23 @@ public:
     MidiSettings midiSettings() const;
     void setMidiSettings(const MidiSettings& s);
     std::vector<mnm::mddump::Global> bankGlobals() const { return m_bankGlobals; }   // the bank project's globals
+    // SCENES (as the Octatrack's): 16 scenes of locked values laid over the kit, the pattern's locks and the LFOs'
+    // targets. XFADE morphs every knob locked in scene A or B between the two; a side without that lock gives the knob's
+    // own value. Slot i: t * 24 + p (a track parameter, as seqParam), then kTracks * 24 + 8 fx + k (a master effect).
+    // Values 0..127, -1 = not locked. Message thread writes, the audio thread reads.
+    static constexpr int kSceneSlots = kTracks * 24 + 32;
+    static constexpr int sceneSlotOf(int t, int p) { return t * 24 + p; }
+    static constexpr int sceneFxSlotOf(int fx, int k) { return kTracks * 24 + fx * 8 + k; }
+    int sceneValue(int s, int i) const { return m_scenes[size_t(s & 15)][size_t(i)].load(); }
+    void setSceneValue(int s, int i, int v);   // -1 clears it
+    int sceneLocks(int s) const { return m_sceneCount[size_t(s & 15)].load(); }
+    std::vector<int8_t> sceneData(int s) const;
+    void setSceneData(int s, const std::vector<int8_t>& d);   // (a short or empty vector clears the rest)
+    void setSceneAudition(int s) { m_sceneAudition.store(s); }   // a scene held for editing plays whole (-1: none)
+    int sceneOf(bool b) const;     // the scene on side A / B (0..15)
+    float xfade() const;           // 0..1
+    int devSceneParam(int t, int p) const { return sceneMix(sceneSlotOf(t, p), seqParam(t, p)); }   // dev/tests: as the last pass had it
+    int devSceneFx(int fx, int k) const { return sceneMix(sceneFxSlotOf(fx, k), juce::jlimit(0, 127, int(std::lround(m_masterFx[size_t(fx)][size_t(k)]->load())))); }
     static MidiSettings fromGlobal(const mnm::mddump::Global& g, const MidiSettings& keep);
     // The global's track outputs (on the MD the routing is a global setting, not the kit's) onto the OUT parameters
     // (message thread). Returns how many tracks it moved off MAIN.
@@ -272,7 +289,7 @@ private:
     // 0x20C930) does when a knob of such a track moves, and the MID trig (0x209914). Writes to other parameters go
     // through m_ctlFifo to the message thread (setValueNotifyingHost); MIDI goes into the block's MIDI output.
     int trackParam(int t, int p) const;   // 0..127 by the MD's numbering (see trackParamId)
-    int midValue(int t, int p) const { return juce::jlimit(0, 127, seqParam(t, p) + m_lfoOffset[size_t(t)][size_t(p)]); }
+    int midValue(int t, int p) const { return juce::jlimit(0, 127, sceneMix(sceneSlotOf(t, p), seqParam(t, p)) + m_lfoOffset[size_t(t)][size_t(p)]); }
     void midStream(int pos);              // after each pass: MID values that moved (knob or LFO) -> MIDI
     std::array<std::array<int16_t, 24>, kTracks> m_lfoOffset{};   // per MID parameter: the LFOs' part (0..127 scale)
     std::array<std::array<int16_t, 24>, kTracks> m_midSent{};     // the value last sent (-1 = not yet: no send)
@@ -415,6 +432,14 @@ private:
     std::atomic<int> m_songStart{0}, m_songCue{-1};
     std::atomic<bool> m_songRelocate{false};
     int m_chainPos = 0;   // audio thread: the chain's playing entry
+    std::array<std::array<std::atomic<int8_t>, kSceneSlots>, kScenes> m_scenes;
+    std::array<std::atomic<int>, kScenes> m_sceneCount{};
+    std::atomic<int> m_sceneAudition{-1};
+    std::atomic<float>* m_sceneA = nullptr, *m_sceneB = nullptr, *m_xfade = nullptr;
+    struct SceneCtx { int a = 0, b = 1, audition = -1; float x = 0.0f; bool on = false; } m_sceneCtx;   // per pass
+    int sceneMix(int i, int base) const;
+    juce::ValueTree scenesToTree() const;
+    void scenesFromTree(const juce::ValueTree& v);
     std::atomic<float> m_songTempo{-1.0f};               // a SONG row's tempo, until the BPM parameter has it (internal PLAY only)
     std::atomic<int> m_programChange{-1};                // a MIDI program change for the message thread (PATTERN follows)
     bool m_seqRunning = false;

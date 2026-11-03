@@ -148,6 +148,7 @@ int main(int argc, char** argv)
     }
     if (const char* v = std::getenv("MD_OSCHECK_TEST")) return test::mdOscheckTest(env, v);
     if (const char* v = std::getenv("MD_SYNC_TEST")) return test::mdSyncTest(env, v);
+    if (const char* v = std::getenv("MD_SCENE_TEST")) return test::mdSceneTest(env, v);
     if (const char* v = std::getenv("MD_RATE_TEST")) return test::mdRateTest(env, v);
     if (const char* v = std::getenv("MD_FOUR_TEST")) return test::mdFourTest(env, v);
     if (const char* v = std::getenv("MD_MIXER_TEST")) return test::mdMixerTest(env, v);
@@ -431,6 +432,17 @@ int main(int argc, char** argv)
             if (std::getenv("MD_UI_KITS")) med->showKitList();
             if (std::getenv("MD_UI_ABOUT")) med->showAbout();
             if (const char* mp = std::getenv("MD_UI_MIDI")) med->devOpenMidi(std::atoi(mp) > 1 ? 1 : 0);   // dev: the MIDI settings open
+            if (const char* sc = std::getenv("MD_UI_SCENES")) {   // dev: SCENES with some locks, A 1 / B 3, the fader at 40 ("hold": scene 3 held)
+                for (int t = 0; t < 6; ++t) proc.setSceneValue(0, MdProcessor::sceneSlotOf(t, 1), 20 + t);
+                for (int t = 0; t < 3; ++t) proc.setSceneValue(2, MdProcessor::sceneSlotOf(t, 0), 100);
+                proc.setSceneValue(2, MdProcessor::sceneFxSlotOf(1, 2), 120);
+                proc.setSceneValue(6, MdProcessor::sceneSlotOf(4, 17), 0);
+                if (auto* a = proc.apvts.getParameter(sceneBId())) a->setValueNotifyingHost(a->convertTo0to1(3.0f));
+                if (auto* a = proc.apvts.getParameter(xfadeId())) a->setValueNotifyingHost(a->convertTo0to1(40.0f));
+                med->devToggleScenes();
+                if (std::strcmp(sc, "hold") == 0) med->devHoldScene(2);
+                med->refresh();
+            }
             if (std::getenv("MD_UI_SKIN")) med->showSkinDialog();
             if (const char* tab = std::getenv("MD_UI_PANEL")) med->showLibrary(std::atoi(tab));   // 0 sounds, 1 kits, 2 patterns          // the kit list open under the header
             if (const char* bar = std::getenv("MD_UI_BAR")) {   // dev: the sequencer bar playing, "step,length,row[,flash[,gridPage]]" (1-based; row / gridPage 0 = none)

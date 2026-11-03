@@ -223,6 +223,11 @@ constexpr const char* kSongNames[32] = {"01", "02", "03", "04", "05", "06", "07"
 constexpr const char* kPatternNames[128] = {"A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11", "A12", "A13", "A14", "A15", "A16", "B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10", "B11", "B12", "B13", "B14", "B15", "B16", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10", "C11", "C12", "C13", "C14", "C15", "C16", "D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08", "D09", "D10", "D11", "D12", "D13", "D14", "D15", "D16", "E01", "E02", "E03", "E04", "E05", "E06", "E07", "E08", "E09", "E10", "E11", "E12", "E13", "E14", "E15", "E16", "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10", "G11", "G12", "G13", "G14", "G15", "G16", "H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08", "H09", "H10", "H11", "H12", "H13", "H14", "H15", "H16"};
 inline juce::String bpmSyncId() { return "bpmsync"; }
 inline juce::String bpmId() { return "bpm"; }
+// SCENES (the Octatrack's crossfader): the scene on each side (1..16) and the fader (0 = all A, 127 = all B)
+inline juce::String sceneAId() { return "scenea"; }
+inline juce::String sceneBId() { return "sceneb"; }
+inline juce::String xfadeId() { return "xfade"; }
+constexpr int kScenes = 16;
 
 inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
@@ -283,6 +288,9 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{songId(), 1}, "SONG", 0, 31, 0, juce::AudioParameterIntAttributes().withStringFromValueFunction([](int v, int) { return juce::String(kSongNames[juce::jlimit(0, 31, v)]); })));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{patternId(), 1}, "PATTERN", 0, 127, 0, juce::AudioParameterIntAttributes().withStringFromValueFunction([](int v, int) { return juce::String(kPatternNames[juce::jlimit(0, 127, v)]); })));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{bpmId(), 1}, "BPM", 30.0f, 300.0f, 120.0f));
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{sceneAId(), 1}, "SCENE A", 1, kScenes, 1));
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{sceneBId(), 1}, "SCENE B", 1, kScenes, 2));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{xfadeId(), 1}, "XFADE", 0.0f, 127.0f, 0.0f));
     return layout;
 }
 

@@ -52,7 +52,10 @@ public:
         int track = 0, pattern = 0, length = 16, page = 0, step = -1, row = -1;
         juce::String machine;
         juce::String chain;   // a pattern chain: "A01>A02>A03" (shown in PTN)
-        bool operator==(const State& o) const { return mark == o.mark && beat == o.beat && playing == o.playing && mix == o.mix && flash == o.flash && seqOff == o.seqOff && rec == o.rec && recording == o.recording && muted == o.muted && hostPlaying == o.hostPlaying && grid == o.grid && empty == o.empty && track == o.track && pattern == o.pattern && length == o.length && page == o.page && step == o.step && row == o.row && machine == o.machine && chain == o.chain; }
+        bool scenes = false;  // SCENES: GRID says SCN, and the pages, X2 and DEL make way for the crossfader
+        int sceneA = 0, sceneB = 1;
+        float xfade = 0.0f;   // 0..1
+        bool operator==(const State& o) const { return scenes == o.scenes && sceneA == o.sceneA && sceneB == o.sceneB && xfade == o.xfade && mark == o.mark && beat == o.beat && playing == o.playing && mix == o.mix && flash == o.flash && seqOff == o.seqOff && rec == o.rec && recording == o.recording && muted == o.muted && hostPlaying == o.hostPlaying && grid == o.grid && empty == o.empty && track == o.track && pattern == o.pattern && length == o.length && page == o.page && step == o.step && row == o.row && machine == o.machine && chain == o.chain; }
     };
     std::function<void(Part)> onPart;
     std::function<void(int)> onPage;
@@ -73,8 +76,15 @@ public:
     void mouseMove(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override { if (m_hover != None) { m_hover = None; repaint(); } }
     std::function<void(Part)> onDragOut;
+    std::function<void(float)> onXfade;   // SCENES: the crossfader dragged / wheeled (0..127)
+    void mouseUp(const juce::MouseEvent&) override { m_xfDrag = false; }
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 private:
     Part m_downPart = None;
+    bool m_xfDrag = false;
+    juce::Rectangle<int> faderRect() const;   // SCENES: the crossfader's box (where the pages, X2 and DEL go)
+    void faderSpan(int& x0, int& x1) const;   // its track, LCD px
+    float faderValueAt(int lcdX) const;
     bool m_dragged = false;
     Part partAt(juce::Point<int> lcd) const;
     int dotX(int i) const { return m_rects[size_t(Pages)].getX() + 3 + i * 9; }

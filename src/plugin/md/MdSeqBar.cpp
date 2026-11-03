@@ -105,9 +105,9 @@ void MdSeqBar::paint(juce::Graphics& g)
         if (dot) for (int y = 0; y < 7; ++y) for (int c = 0; c < 7; ++c) if (disc7[y][c] == '#') cv.set(x + c, y0 + y, ink);
     }
     {   // GRID: solid while the keys are steps
-        const auto r = box(Grid, m_s.grid);
+        const auto r = box(Grid, m_s.grid || m_s.scenes);
         static const char* const names[9] = {"GRID", "ACC", "SLD", "SWG", "COND", "TIME", "RTRG", "GEN", "LANE"};
-        cv.textCentred(spec::kFontBold8, names[juce::jlimit(0, 8, m_s.mark)], r.getX(), r.getWidth(), r.getY() + kBoldY, !m_s.grid);
+        cv.textCentred(spec::kFontBold8, m_s.scenes ? "SCN" : names[juce::jlimit(0, 8, m_s.mark)], r.getX(), r.getWidth(), r.getY() + kBoldY, !(m_s.grid || m_s.scenes));
     }
     auto arrows = [&](Part prev, Part next) {
         auto r = box(prev, false); arrowH(cv, r.getCentreX(), r.getCentreY(), true, true);
@@ -128,7 +128,22 @@ void MdSeqBar::paint(juce::Graphics& g)
     arrows(PtnPrev, PtnNext);
     if (m_s.chain.isNotEmpty()) labelled(Ptn, "CHN", m_s.chain);
     else labelled(Ptn, "PTN", juce::String(kPatternNames[juce::jlimit(0, 127, m_s.pattern)]) + (m_s.empty ? "-" : ""));
-    {   // the pages: a ring each (a point past the length), solid when playing, underlined when GRID shows it
+    if (m_s.scenes) {   // SCENES: the crossfader, A's scene on the left, B's on the right
+        const auto r = faderRect();
+        if (m_hover == Pages || m_hover == Edit || m_hover == DelPg) frame(cv, r.reduced(1));
+        frame(cv, r);
+        const juce::String a = "A" + juce::String(m_s.sceneA + 1), b = "B" + juce::String(m_s.sceneB + 1);
+        cv.text(spec::kFontBold8, a.toRawUTF8(), r.getX() + 4, r.getY() + kBoldY, true);
+        cv.text(spec::kFontBold8, b.toRawUTF8(), r.getRight() - 4 - LcdCanvas::textWidth(spec::kFontBold8, b.toRawUTF8()), r.getY() + kBoldY, true);
+        int x0 = 0, x1 = 0;
+        faderSpan(x0, x1);
+        const int cy = r.getCentreY();
+        for (int x = x0; x <= x1; x += 2) cv.set(x, cy, true);
+        cv.fillRect(x0, cy - 2, 1, 5, true); cv.fillRect(x1, cy - 2, 1, 5, true); cv.fillRect((x0 + x1) / 2, cy - 1, 1, 3, true);
+        const int tx = x0 + int(std::lround(m_s.xfade * float(x1 - x0)));
+        cv.fillRect(tx - 2, r.getY() + 3, 5, r.getHeight() - 6, true);
+    }
+    if (!m_s.scenes) {   // the pages: a ring each (a point past the length), solid when playing, underlined when GRID shows it
         const auto r = box(Pages, false);
         const int pages = (juce::jlimit(1, 64, m_s.length) + 15) / 16, playing = m_s.step >= 0 ? m_s.step / 16 : -1;
         for (int i = 0; i < 4; ++i) {
@@ -141,11 +156,11 @@ void MdSeqBar::paint(juce::Graphics& g)
             if (m_s.grid && i == m_s.page) cv.fillRect(x + 1, y + 8, 5, 1, true);
         }
     }
-    {   // X2: the pattern doubled (two pages, x2)
+    if (!m_s.scenes) {   // X2: the pattern doubled (two pages, x2)
         const auto r = box(Edit, false);
         cv.text(spec::kFontBold8, "X2", r.getX() + 4, r.getY() + kBoldY, true);
     }
-    {   // DEL PG: the shown page removed (the pages after it move up)
+    if (!m_s.scenes) {   // DEL PG: the shown page removed (the pages after it move up)
         const auto r = box(DelPg, false);
         cv.textCentred(spec::kFontBold8, "DEL", r.getX(), r.getWidth(), r.getY() + kBoldY, true);
     }
@@ -177,6 +192,35 @@ void MdSeqBar::paint(juce::Graphics& g)
     cv.draw(g, 0, 0, kS);
 }
 
+juce::Rectangle<int> MdSeqBar::faderRect() const
+{
+    return m_rects[size_t(Pages)].getUnion(m_rects[size_t(Edit)]).getUnion(m_rects[size_t(DelPg)]);
+}
+
+void MdSeqBar::faderSpan(int& x0, int& x1) const
+{
+    const auto r = faderRect();
+    const int lw = LcdCanvas::textWidth(spec::kFontBold8, "A16");
+    x0 = r.getX() + 4 + lw + 5;
+    x1 = juce::jmax(x0 + 8, r.getRight() - 4 - lw - 5);
+}
+
+float MdSeqBar::faderValueAt(int lcdX) const
+{
+    int x0 = 0, x1 = 0;
+    faderSpan(x0, x1);
+    return juce::jlimit(0.0f, 127.0f, float(lcdX - x0) / float(x1 - x0) * 127.0f);
+}
+
+void MdSeqBar::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (!m_s.scenes || !faderRect().contains(e.getPosition() / kS) || !onXfade) { Component::mouseWheelMove(e, w); return; }
+    const float d = std::abs(w.deltaY) >= std::abs(w.deltaX) ? w.deltaY : -w.deltaX;
+    if (d == 0.0f) return;
+    const float step = e.mods.isShiftDown() ? 1.0f : 4.0f;
+    onXfade(juce::jlimit(0.0f, 127.0f, m_s.xfade * 127.0f + ((d > 0) != w.isReversed ? step : -step)));
+}
+
 MdSeqBar::Part MdSeqBar::partAt(juce::Point<int> lcd) const
 {
     for (int i = 0; i < kParts; ++i) if (m_rects[size_t(i)].contains(lcd)) return Part(i);
@@ -185,6 +229,7 @@ MdSeqBar::Part MdSeqBar::partAt(juce::Point<int> lcd) const
 
 void MdSeqBar::mouseDrag(const juce::MouseEvent& e)
 {
+    if (m_xfDrag) { if (onXfade) onXfade(faderValueAt(e.getPosition().x / kS)); return; }
     if (m_dragged || (m_downPart != Ptn && m_downPart != Trk) || e.getDistanceFromDragStart() < 8) return;
     m_dragged = true;
     if (onDragOut) onDragOut(m_downPart);
@@ -196,6 +241,13 @@ void MdSeqBar::mouseDown(const juce::MouseEvent& e)
     const auto p = partAt(lcd);
     m_downPart = p; m_dragged = false;
     const bool edit = e.mods.isShiftDown() || e.mods.isCommandDown() || e.mods.isCtrlDown() || e.mods.isAltDown();
+    if (m_s.scenes && (p == Pages || p == Edit || p == DelPg)) {   // the crossfader: a click jumps, a drag follows
+        if (e.mods.isAltDown() || e.getNumberOfClicks() > 1) { if (onXfade) onXfade(lcd.x < faderRect().getCentreX() ? 0.0f : 127.0f); return; }
+        m_xfDrag = true;
+        if (onXfade) onXfade(faderValueAt(lcd.x));
+        return;
+    }
+    if (p == Grid && e.mods.isShiftDown()) { if (onEditClick) onEditClick(Grid, -1, e.mods); return; }   // SCENES
     if (p == Pages) {
         for (int i = 0; i < 4; ++i)
             if (lcd.x >= dotX(i) - 2 && lcd.x <= dotX(i) + 8) {
@@ -213,12 +265,18 @@ void MdSeqBar::mouseMove(const juce::MouseEvent& e)
 {
     const auto p = partAt(e.getPosition() / kS);
     if (p != m_hover) { m_hover = p; repaint(); }
+    if (m_s.scenes && (p == Pages || p == Edit || p == DelPg)) {
+        setTooltip("XFADE: morphs every knob locked in scene A or B between them (a host parameter). Drag or wheel it; double-click: "
+                   "the nearer end. Pick A / B: Alt+click / Shift+click a scene key");
+        return;
+    }
+    if (m_s.scenes && p == Grid) { setTooltip("SCENES (N): the keys are 16 scenes. Click to go back to the tracks"); return; }
     switch (p) {
         case Play: setTooltip(m_s.hostPlaying ? "The host's transport is running: the pattern follows it" : "Play / stop the pattern on the plugin's own clock (while the host is stopped)"); break;
         case Rec: setTooltip("REC: while the pattern plays, the trigs you play (MIDI notes, the track keys) go onto the step playing, "
                              "and a knob turned during a step locks its value on the next step's trig. Ctrl+Z takes a run back"); break;
-        case Grid: setTooltip(m_s.grid ? "GRID (G): the keys are the selected track's steps (click a step to place a trig). Click to get the tracks back"
-                                       : "GRID (G): click to place steps with the keys (the selected track's steps; TRK < > picks the track)"); break;
+        case Grid: setTooltip(m_s.grid ? "GRID (G): the keys are the selected track's steps (click a step to place a trig). Click to get the tracks back. Shift+click (N): SCENES"
+                                       : "GRID (G): click to place steps with the keys (the selected track's steps; TRK < > picks the track). Shift+click (N): SCENES, the crossfader"); break;
         case Mute: setTooltip(m_s.muted ? "The track is muted: its trigs don't play. Click to unmute (Alt+click a key in GRID: that key's track)"
                                          : "Mute the track (Alt+click a key in GRID: that key's track)"); break;
         case TrkPrev: case TrkNext: setTooltip("The track whose steps GRID shows and edits"); break;

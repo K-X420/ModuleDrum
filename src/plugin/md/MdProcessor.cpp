@@ -53,6 +53,10 @@ MdProcessor::MdProcessor()
     m_outputMode = apvts.getRawParameterValue(outputModeId());
     m_bpmSync = apvts.getRawParameterValue(bpmSyncId());
     m_bpm = apvts.getRawParameterValue(bpmId());
+    m_sceneA = apvts.getRawParameterValue(sceneAId());
+    m_sceneB = apvts.getRawParameterValue(sceneBId());
+    m_xfade = apvts.getRawParameterValue(xfadeId());
+    for (auto& sc : m_scenes) for (auto& v : sc) v.store(-1);
     m_accent = apvts.getRawParameterValue(accentId());
     m_seqOn = apvts.getRawParameterValue(seqId());
     m_extended = apvts.getRawParameterValue(extendedId());
@@ -175,13 +179,20 @@ void MdProcessor::refreshParameters()
             const int now = target < kTracks ? trackParam(target, p) : p < 8 ? int(val(m_masterFx[size_t(target - kTracks)][size_t(p)])) : w;
             if (now == w || m_clock > m_ctlWriteUntil[size_t(target)]) w = -1;
         }
+    {   // SCENES: the two sides and the fader for this pass
+        auto& c = m_sceneCtx;
+        c.audition = m_sceneAudition.load();
+        c.a = sceneOf(false); c.b = sceneOf(true); c.x = xfade();
+        c.on = c.audition >= 0 ? m_sceneCount[size_t(c.audition & 15)].load() > 0
+                               : m_sceneCount[size_t(c.a)].load() > 0 || m_sceneCount[size_t(c.b)].load() > 0;
+    }
     const auto* ok = m_kitOverride.load();
     for (int t = 0; t < kTracks; ++t) {
         auto& tr = m_tracks[size_t(t)];
         mnm::md::Engine::Track e;
         e.machine = ok ? overrideMachine(*ok, t) : machineIdOf(t);
         auto& p = e.params;
-        for (int k = 0; k < 24; ++k) p[size_t(k)] = uint8_t(seqParam(t, k));
+        for (int k = 0; k < 24; ++k) p[size_t(k)] = uint8_t(sceneMix(sceneSlotOf(t, k), seqParam(t, k)));
         e.level = ok ? uint8_t(juce::jlimit(0, 127, int(ok->levels[t]))) : val(tr.mix[13]);
         static const int lfoMax[5] = {15, 23, 5, 5, 2};
         for (int k = 0; k < 5; ++k) e.lfoConfig[size_t(k)] = ok ? uint8_t(juce::jlimit(0, lfoMax[k], int(ok->lfos[t][k]))) : val(tr.lfo[k]);
@@ -205,7 +216,7 @@ void MdProcessor::refreshParameters()
     for (int fx = 0; fx < 4; ++fx)
         for (int k = 0; k < 8; ++k) {
             const int w = m_ctlWrite[size_t(kTracks + fx)][size_t(k)];
-            master[size_t(fx)][size_t(k)] = ok ? uint8_t(kitFx[fx][k] & 0x7F) : w >= 0 ? uint8_t(w) : val(m_masterFx[size_t(fx)][size_t(k)]);
+            master[size_t(fx)][size_t(k)] = uint8_t(sceneMix(sceneFxSlotOf(fx, k), ok ? uint8_t(kitFx[fx][k] & 0x7F) : w >= 0 ? uint8_t(w) : val(m_masterFx[size_t(fx)][size_t(k)])));
         }
     m_engine->setMasterFx(master);
     if (m_snap.exchange(false)) { m_engine->snap(); m_ctlQuietUntil = m_clock + int64_t(0.2 * m_hostRate); }
@@ -218,6 +229,72 @@ void MdProcessor::refreshParameters()
         m_wasSynced = synced;
     }
     m_engine->setTempo(tempo());
+}
+
+// ---------------------------------------------------------------------------------------------- scenes
+
+int MdProcessor::sceneOf(bool b) const { return juce::jlimit(1, kScenes, int(std::lround((b ? m_sceneB : m_sceneA)->load()))) - 1; }
+float MdProcessor::xfade() const { return juce::jlimit(0.0f, 1.0f, m_xfade->load() / 127.0f); }
+
+// A knob's value through the scenes: held for editing, the scene's lock; else A and B's (or the knob's own on a side
+// without one) at the fader
+int MdProcessor::sceneMix(int i, int base) const
+{
+    const auto& c = m_sceneCtx;
+    if (!c.on) return base;
+    if (c.audition >= 0) { const int v = m_scenes[size_t(c.audition & 15)][size_t(i)].load(); return v >= 0 ? v : base; }
+    const int a = m_scenes[size_t(c.a)][size_t(i)].load(), b = m_scenes[size_t(c.b)][size_t(i)].load();
+    if (a < 0 && b < 0) return base;
+    const float av = float(a >= 0 ? a : base), bv = float(b >= 0 ? b : base);
+    return juce::jlimit(0, 127, int(std::lround(av + (bv - av) * c.x)));
+}
+
+void MdProcessor::setSceneValue(int s, int i, int v)
+{
+    if (i < 0 || i >= kSceneSlots) return;
+    auto& slot = m_scenes[size_t(s & 15)][size_t(i)];
+    const int was = slot.load(), now = v < 0 ? -1 : juce::jlimit(0, 127, v);
+    slot.store(int8_t(now));
+    if ((was < 0) != (now < 0)) m_sceneCount[size_t(s & 15)].fetch_add(now < 0 ? -1 : 1);
+}
+
+std::vector<int8_t> MdProcessor::sceneData(int s) const
+{
+    std::vector<int8_t> d(static_cast<size_t>(kSceneSlots), int8_t(-1));
+    for (int i = 0; i < kSceneSlots; ++i) d[size_t(i)] = int8_t(sceneValue(s, i));
+    return d;
+}
+
+void MdProcessor::setSceneData(int s, const std::vector<int8_t>& d)
+{
+    for (int i = 0; i < kSceneSlots; ++i) setSceneValue(s, i, i < int(d.size()) ? d[size_t(i)] : -1);
+}
+
+// Kept in the plugin state: a property per scene with locks, two hex digits a slot (FF = none)
+juce::ValueTree MdProcessor::scenesToTree() const
+{
+    juce::ValueTree v("SCENES");
+    for (int s = 0; s < kScenes; ++s) {
+        if (sceneLocks(s) == 0) continue;
+        juce::String hex;
+        hex.preallocateBytes(size_t(2 * kSceneSlots));
+        for (int i = 0; i < kSceneSlots; ++i) hex << juce::String::toHexString(int(uint8_t(sceneValue(s, i)))).paddedLeft('0', 2);
+        v.setProperty("s" + juce::String(s), hex, nullptr);
+    }
+    return v;
+}
+
+void MdProcessor::scenesFromTree(const juce::ValueTree& v)
+{
+    for (int s = 0; s < kScenes; ++s) {
+        const auto hex = v.isValid() ? v.getProperty("s" + juce::String(s)).toString() : juce::String();
+        std::vector<int8_t> d;
+        if (hex.length() == 2 * kSceneSlots) {
+            d.resize(size_t(kSceneSlots));
+            for (int i = 0; i < kSceneSlots; ++i) { const int b = hex.substring(2 * i, 2 * i + 2).getHexValue32(); d[size_t(i)] = int8_t(b > 127 ? -1 : b); }
+        }
+        setSceneData(s, d);
+    }
 }
 
 double MdProcessor::tempo() const

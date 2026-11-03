@@ -189,10 +189,40 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
     }
 }
 
+void MdTrackKeys::paintScenes(LcdCanvas& cv)
+{
+    const auto& sc = m_scn;
+    for (int i = 0; i < kTracks; ++i) {
+        const auto r = keyRect(i);
+        const bool held = i == sc.held, ink = !held;
+        if (held) cv.fillRect(r.getX(), r.getY(), r.getWidth(), r.getHeight(), true);
+        else dottedFrame(cv, r.getX(), r.getY(), r.getWidth(), r.getHeight());
+        cv.text(spec::kFontBold8, juce::String(i + 1).toRawUTF8(), r.getX() + 3, r.getY() + 3, ink);
+        auto tag = [&](const char* letter, int x) {   // the side it is on: a solid tab with the letter
+            cv.fillRect(x, r.getY() + 3, 7, 8, ink);
+            cv.text(spec::kFontTiny3x5, letter, x + 2, r.getY() + 5, !ink);
+        };
+        const bool a = i == sc.a, b = i == sc.b;
+        if (a && b) { tag("A", r.getRight() - 17); tag("B", r.getRight() - 9); }
+        else if (a) tag("A", r.getRight() - 9);
+        else if (b) tag("B", r.getRight() - 9);
+        const int n = sc.locks[size_t(i)];
+        cv.textCentred(spec::kFontTiny3x5, n > 0 ? juce::String(n).toRawUTF8() : "--", r.getX() + 1, r.getWidth() - 1, r.getY() + 15, ink);
+        cv.textCentred(spec::kFontTiny3x5, n == 1 ? "LOCK" : n > 1 ? "LOCKS" : "EMPTY", r.getX() + 1, r.getWidth() - 1, r.getY() + 21, ink);
+        if (a || b) {   // how much of it plays: A's share is 1 - XFADE, B's is XFADE
+            const float share = a && b ? 1.0f : a ? 1.0f - sc.x : sc.x;
+            const int full = r.getWidth() - 6, len = int(std::lround(share * float(full)));
+            for (int x = 0; x < full; x += 2) cv.set(r.getX() + 3 + x, r.getBottom() - 4, ink);
+            if (len > 0) cv.fillRect(r.getX() + 3, r.getBottom() - 5, len, 3, ink);
+        }
+    }
+}
+
 void MdTrackKeys::paint(juce::Graphics& g)
 {
     const int w = getWidth() / kScale, h = getHeight() / kScale;
     LcdCanvas cv(w, h);
+    if (m_scn.on) { paintScenes(cv); cv.draw(g, 0, 0); return; }
     if (m_grid.on) { paintGrid(cv); cv.draw(g, 0, 0); return; }
     for (int t = 0; t < kTracks; ++t) {
         const auto r = keyRect(t);
@@ -253,6 +283,17 @@ void MdTrackKeys::paint(juce::Graphics& g)
 void MdTrackKeys::mouseDown(const juce::MouseEvent& e)
 {
     const auto p = e.getPosition() / kScale;
+    if (m_scn.on) {   // SCENES: hold for editing, A, B, the menu
+        for (int i = 0; i < kTracks; ++i) {
+            if (!keyRect(i).contains(p)) continue;
+            if (e.mods.isPopupMenu()) { if (onSceneMenu) onSceneMenu(i); }
+            else if (e.mods.isAltDown()) { if (onSceneA) onSceneA(i); }
+            else if (e.mods.isShiftDown()) { if (onSceneB) onSceneB(i); }
+            else if (onSceneHold) onSceneHold(i);
+            return;
+        }
+        return;
+    }
     if (m_grid.on) {
         for (int i = 0; i < kTracks; ++i) {
             if (!keyRect(i).contains(p)) continue;
@@ -364,7 +405,7 @@ void MdTrackKeys::mouseDrag(const juce::MouseEvent& e)
 
 void MdTrackKeys::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
-    if (!m_grid.on || m_grid.mark < 4) { Component::mouseWheelMove(e, w); return; }
+    if (m_scn.on || !m_grid.on || m_grid.mark < 4) { Component::mouseWheelMove(e, w); return; }
     const int key = trackAt(e.getPosition());
     const int s = m_grid.page * 16 + key;
     const float d = std::abs(w.deltaY) >= std::abs(w.deltaX) ? w.deltaY : -w.deltaX;
@@ -389,6 +430,12 @@ void MdTrackKeys::mouseMove(const juce::MouseEvent& e)
 {
     const auto p = e.getPosition() / kScale;
     juce::String tip;
+    if (m_scn.on) {
+        const int key = trackAt(e.getPosition());
+        setTooltip(key < 0 ? juce::String() : "Scene " + juce::String(key + 1) + ". Click: hold it to edit (turn knobs on any track or the master effects to lock them in it; "
+                   "double-click a knob: its lock goes). Alt+click: put it on A. Shift+click: on B. Right-click: copy, paste, clear. XFADE in the bar morphs A to B");
+        return;
+    }
     if (m_grid.on && m_grid.mark == 7) { setTooltip("Generate. Click key N: N hits a page, even (Euclidean). Alt+Shift+click: a second generator. B: how they combine. Wheel / Shift+wheel: rotate. Shift: random. Alt: every Nth"); return; }
     if (m_grid.on && m_grid.mark == 8) { setTooltip("Lock lane (the knob touched last). Drag: draw. Shift+drag: ramp. Alt: clear. Wheel: nudge"); return; }
     if (m_grid.on && m_grid.mark >= 4) {

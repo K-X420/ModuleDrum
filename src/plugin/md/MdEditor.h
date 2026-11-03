@@ -87,6 +87,18 @@ public:
         int extra(int s) const { return mark == 4 ? cond[size_t(s)] : mark == 5 ? micro[size_t(s)] : mark == 6 ? retrig[size_t(s)] : 0; }
     };
     void setGrid(const Grid& g) { if (!(g == m_grid)) { m_grid = g; repaint(); } }
+    // SCENES (N, or Shift+click GRID), as the Octatrack's scene keys: the 16 keys are the scenes. Click: hold one for
+    // editing (the track and master knobs set its locks, and it plays whole); Alt+click: it goes on side A,
+    // Shift+click: side B; right-click: its menu. A key shows its locks and how much of it the fader lets through.
+    struct Scenes {
+        bool on = false;
+        int a = 0, b = 1, held = -1;
+        float x = 0.0f;
+        std::array<int, 16> locks{};
+        bool operator==(const Scenes& o) const { return on == o.on && a == o.a && b == o.b && held == o.held && x == o.x && locks == o.locks; }
+    };
+    void setScenes(const Scenes& s) { if (!(s == m_scn)) { m_scn = s; repaint(); } }
+    std::function<void(int scene)> onSceneHold, onSceneA, onSceneB, onSceneMenu;
     const Grid& devGridState() const { return m_grid; }   // dev/tests
     std::function<juce::String(int step)> stepLocks;   // GRID: a step's locks as text for its tooltip ("" none)
     std::function<void(int step)> onStep, onHold;
@@ -146,6 +158,8 @@ private:
     uint64_t m_seqTrigs = 0;
     Grid m_grid;
     void paintGrid(one::LcdCanvas& cv);
+    void paintScenes(one::LcdCanvas& cv);
+    Scenes m_scn;
 };
 
 // The machine picker over the pages, as Monomodule's: a column per family (GND TRX EFM E12 P-I INP, ROM over three
@@ -254,9 +268,12 @@ public:
     void devStripPart(MdKitStrip::Part p) { if (m_strip.onPart) m_strip.onPart(p); }
     void devUndo() { undo(); }
     void devRedo() { redo(); }
-    one::KnobPage& devSynPage() { return m_syn; }
     MdSongEditor& devSongEditor() { return m_songEd; }
     void devOpenMidi(int page = 0) { openMidiPanel(); m_midiPanel.setPage(page); }
+    void devToggleScenes() { toggleScenes(); }
+    void devHoldScene(int s) { holdScene(s); }
+    one::KnobPage& devSynPage() { return m_syn; }
+    one::KnobPage& devMasterPage() { return m_master; }
     void devOpenSamples() { openSamplePanel(); }
     juce::String devImportClip(const juce::File& f, int onlyTrack) { return importMidiClip(f, onlyTrack); }
     void devToggleMixer() { toggleMixer(); }
@@ -462,6 +479,13 @@ private:
     bool m_gridOn = false;
     int m_gridPage = 0, m_heldStep = -1, m_outTab = 0, m_ptnPoll = 0;
     uint64_t m_heldSet = 0;   // every held step (m_heldStep is one of them, or -1 and this 0)
+    // SCENES: the keys are the scenes; a held scene takes the knobs' turns as its locks (and plays whole)
+    bool m_sceneMode = false;
+    int m_heldScene = -1;
+    std::vector<int8_t> m_sceneClip;   // a copied scene
+    void toggleScenes();
+    void holdScene(int s);
+    void sceneMenu(int s);
     bool m_pagePinned = false;
     bool m_browseKits = false;   // Up / Down step kits (the KIT selector was used last), else the track's sounds   // a page dot clicked while playing: GRID stays there (else it follows the playing page)
     std::array<std::string, 128> m_ptnNames;      // "A01", or "A01 --" for an empty slot
