@@ -63,9 +63,12 @@ MdProcessor::MdProcessor()
     m_extended = apvts.getRawParameterValue(extendedId());
     m_extras = apvts.getRawParameterValue(extrasId());
     m_patternParam = apvts.getRawParameterValue(patternId());
+    m_ptnChange = apvts.getRawParameterValue(ptnChangeId());
     m_seqMode = apvts.getRawParameterValue(seqModeId());
     m_songParam = apvts.getRawParameterValue(songId());
     for (auto& a : m_lockVal) a.fill(-1);
+    for (auto& s : m_soundLock) s.store(-1);
+    for (auto& s : m_auditionPool) s.store(-1);
     for (auto& a : m_ctlWrite) a.fill(-1);
     m_recSkip.fill(-1);
     setMidiSettings(defaultMidiSettings());
@@ -174,6 +177,7 @@ bool MdProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 // through the routing law, and through the master effect sections.
 void MdProcessor::refreshParameters()
 {
+    if (!m_local.load() && m_snap.load()) localSnapshot();   // LOCAL OFF: a kit load sets the sound too
     auto val = [](std::atomic<float>* p) { return uint8_t(juce::jlimit(0, 127, int(std::lround(p->load())))); };
     // CTR writes that have reached their parameter (or never will) stop standing in for it
     for (int target = 0; target < kTracks + 4; ++target)
@@ -194,12 +198,15 @@ void MdProcessor::refreshParameters()
     for (int t = 0; t < kTracks; ++t) {
         auto& tr = m_tracks[size_t(t)];
         mnm::md::Engine::Track e;
-        e.machine = ok ? overrideMachine(*ok, t) : machineIdOf(t);
+        e.machine = trackMachine(t);
         auto& p = e.params;
         for (int k = 0; k < 24; ++k) p[size_t(k)] = uint8_t(sceneMix(sceneSlotOf(t, k), seqParam(t, k)));
         e.level = ok ? uint8_t(juce::jlimit(0, 127, int(ok->levels[t]))) : val(tr.mix[13]);
         static const int lfoMax[5] = {15, 23, 5, 5, 2};
         for (int k = 0; k < 5; ++k) e.lfoConfig[size_t(k)] = ok ? uint8_t(juce::jlimit(0, lfoMax[k], int(ok->lfos[t][k]))) : val(tr.lfo[k]);
+        if (const auto* sl = soundLocked(t))   // a sound lock's LFO (one aimed at its own track follows the sound here)
+            for (int k = 0; k < 5; ++k)
+                e.lfoConfig[size_t(k)] = uint8_t(juce::jlimit(0, lfoMax[k], k == 0 && sl->lfo[0] == sl->track ? t : int(sl->lfo[k])));
         e.route = juce::jlimit(0, kNumRoutes - 1, int(std::lround(tr.route->load())));
         e.muteGroup = muteGroupOf(t);
         if (isMidMachine(e.machine)) {   // no voice; the parameters stay (the OS's LFOs move them: midStream)
@@ -233,6 +240,66 @@ void MdProcessor::refreshParameters()
         m_wasSynced = synced;
     }
     m_engine->setTempo(tempo());
+}
+
+// ---------------------------------------------------------------------------------------------- the sound pool
+
+int MdProcessor::trackMachine(int t) const
+{
+    if (const auto* s = soundLocked(t)) { const int id = int(s->model & 0xFF); return kMachines[machineIndexOf(id)].id == id ? id : 0; }
+    const auto* ok = m_kitOverride.load();
+    return ok ? overrideMachine(*ok, t) : machineIdOf(t);
+}
+
+void MdProcessor::setPoolSound(int slot, const mnm::mddump::PoolSound* s)
+{
+    if (slot < 0 || slot >= mnm::mddump::kPoolSlots) return;
+    std::shared_ptr<const SoundPool> cur;
+    { const juce::SpinLock::ScopedLockType l(m_bankLock); cur = m_pool; }
+    auto p = std::make_shared<SoundPool>(*cur);
+    p->used[size_t(slot)] = s != nullptr;
+    p->s[size_t(slot)] = s ? *s : mnm::mddump::PoolSound{};
+    p->s[size_t(slot)].slot = slot;
+    const juce::SpinLock::ScopedLockType l(m_bankLock);
+    m_poolOld = std::move(m_pool);   // the audio thread may still hold it this block
+    m_pool = std::move(p);
+}
+
+void MdProcessor::setSoundPool(const std::vector<mnm::mddump::PoolSound>& sounds)
+{
+    auto p = std::make_shared<SoundPool>();
+    for (const auto& s : sounds)
+        if (s.slot >= 0 && s.slot < mnm::mddump::kPoolSlots) { p->s[size_t(s.slot)] = s; p->used[size_t(s.slot)] = true; }
+    const juce::SpinLock::ScopedLockType l(m_bankLock);
+    m_poolOld = std::move(m_pool);
+    m_pool = std::move(p);
+}
+
+// Kept in the plugin state: a property per sound, its pool message in hex
+juce::ValueTree MdProcessor::poolToTree() const
+{
+    juce::ValueTree v("POOL");
+    const auto p = soundPool();
+    for (int i = 0; i < mnm::mddump::kPoolSlots; ++i) {
+        if (!p->used[size_t(i)]) continue;
+        const auto b = mnm::mddump::encodePoolSound(p->s[size_t(i)]);
+        v.setProperty("p" + juce::String(i), juce::String::toHexString(b.data(), int(b.size()), 0), nullptr);
+    }
+    return v;
+}
+
+void MdProcessor::poolFromTree(const juce::ValueTree& v)
+{
+    std::vector<mnm::mddump::PoolSound> sounds;
+    for (int i = 0; v.isValid() && i < mnm::mddump::kPoolSlots; ++i) {
+        const auto hex = v.getProperty("p" + juce::String(i)).toString();
+        if (hex.isEmpty()) continue;
+        juce::MemoryBlock mb;
+        mb.loadFromHexString(hex);
+        mnm::mddump::PoolSound s;
+        if (mnm::mddump::decodePoolSound(static_cast<const uint8_t*>(mb.getData()), mb.getSize(), s)) sounds.push_back(s);
+    }
+    setSoundPool(sounds);
 }
 
 // ---------------------------------------------------------------------------------------------- scenes
@@ -508,7 +575,16 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
     }
     midi.clear();
     for (int t = 0; t < kTracks; ++t)
-        if (m_audition[size_t(t)].exchange(false)) { m_pending.push_back({t, 0.0, 100}); recordTrig(t, m_seqClock0, 100); }
+        if (m_audition[size_t(t)].exchange(false)) {
+            if (!m_local.load()) {   // LOCAL OFF: a track key is its note out, not a trig
+                const int note = m_trackNote[size_t(t)].load(), ch = m_baseCh.load();
+                if (note >= 0 && ch >= 0) { midSend(0, uint8_t(0x90 | ch), uint8_t(note), 100); midSend(0, uint8_t(0x90 | ch), uint8_t(note), 0); }
+                continue;
+            }
+            m_pending.push_back({t, 0.0, 100}); recordTrig(t, m_seqClock0, 100);
+        }
+    for (int t = 0; t < kTracks; ++t)
+        if (const int slot = m_auditionPool[size_t(t)].exchange(-1); slot >= 0) { PendingTrig pt{t, 0.0, 100}; pt.echo = false; pt.pool = slot; m_pending.push_back(pt); }
     controlMachines(n);
     for (auto& p : m_peak) p.store(p.load() * 0.8f);   // the meters' fall-off
 
@@ -522,11 +598,14 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
     // group side is the engine's (Engine::groupTrig).
     bool ctrTrig = false;
     bool echo = true;   // the trig being fired goes out as MIDI (not a note that came in)
-    auto fireOne = [&](int t, double enginePos, int accent, const mnm::md::SeqTrig* s) {
-        const auto* ok = m_kitOverride.load();
-        const int id = ok ? overrideMachine(*ok, t) : machineIdOf(t);
+    auto fireOne = [&](int t, double enginePos, int accent, const mnm::md::SeqTrig* s, int pool = -1) {
         const int pos = juce::jlimit(0, juce::jmax(0, n - 1), int(std::lround(enginePos / ratio)));
         if (s && s->lockOnly) { trigLocks(t, s, pos); return; }   // a trigless lock: the locks, no voice
+        if (!(s && s->retrig)) {   // a sound lock plays from this trig to the track's next (a trig without one: its own sound)
+            const int slot = s ? (extendedMode() ? s->soundLock - 1 : -1) : pool;
+            m_soundLock[size_t(t)].store(slot >= 0 && m_poolAudio && m_poolAudio->used[size_t(slot)] ? slot : -1);
+        }
+        const int id = trackMachine(t);
         if (!(s && s->retrig)) trigLocks(t, s, pos);   // (a retrig's later hits: the locks are set already)
         if (isMidMachine(id)) { midTrig(t, pos); m_engine->groupTrig(t); }
         else if (isCtrMachine(id)) { m_engine->groupTrig(t); ctrTrig = true; }
@@ -555,7 +634,7 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
         const int accent = s || pt.volume ? pt.velocity
                          : int(std::lround(m_velMode->load())) == 0 ? pt.velocity
                          : pt.velocity >= 112 ? 0x80 + 2 * int(std::lround(m_accent->load())) : -128;
-        fireOne(pt.track, pt.enginePos, accent, s);
+        fireOne(pt.track, pt.enginePos, accent, s, pt.pool);
         if (s && m_recordingUi.load() && m_seg.valid && m_seg.slot >= 0) {   // knobs turned during the step before: locked on this trig
             // (MainOS 0x21D842: the turned parameters are locked onto the next step reached if the track trigs there,
             // and forgotten at every step either way)
@@ -619,7 +698,7 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
     for (auto it = m_outNotes.begin(); it != m_outNotes.end();)   // the trig notes that end in this block
         if (it->offAt < m_clock + n) { midSend(int(juce::jmax<int64_t>(0, it->offAt - m_clock)), uint8_t(0x80 | it->channel), uint8_t(it->note), 0); it = m_outNotes.erase(it); }
         else ++it;
-    if (m_midiOutMode.load() >= 2) scanKnobsOut(0);
+    if (m_midiOutMode.load() >= 2 || !m_local.load()) scanKnobsOut(0);   // (LOCAL OFF: the knobs only go out)
     // the MID notes that end in this block, then the block's MIDI out
     for (auto& notes : m_midNotes)
         for (auto it = notes.begin(); it != notes.end();)

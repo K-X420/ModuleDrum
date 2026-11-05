@@ -61,6 +61,7 @@ SeqTrig PatternPlayer::trigAt(int64_t stepIndex, int t, bool extras) const
     e.track = t;
     e.clock = double(stepIndex) * sc + (swung(t, e.step) ? swing : 0.0);
     e.accent = accented(t, e.step);
+    e.soundLock = extras ? m_p.soundLock[t][e.step] : 0;
     e.locks.fill(-1);
     e.slideTo.fill(-1);
     for (int q = 0; q < 24; ++q) e.locks[size_t(q)] = int16_t(lock(t, q, e.step));

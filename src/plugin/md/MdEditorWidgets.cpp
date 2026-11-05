@@ -143,14 +143,14 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
         // an extras window (CONDITION / MICRO / RETRIG) a step with one is lit and says it
         const uint64_t markMask = gr.mark == 1 ? gr.accent : gr.mark == 2 ? gr.slide : gr.mark == 3 ? gr.swing : gr.trigs;   // (GENERATE: the trigs)
         const bool hasTrig = (gr.trigs >> s) & 1;
-        const bool extras = gr.mark >= 4 && gr.mark <= 6;
+        const bool extras = gr.extrasWindow();
         const bool trig = extras ? gr.extra(s) != 0 : gr.mark > 0 ? ((markMask >> s) & 1) != 0 : hasTrig;
         if (trig) cv.fillRect(r.getX(), r.getY(), r.getWidth(), r.getHeight(), true);
         else dottedFrame(cv, r.getX(), r.getY(), r.getWidth(), r.getHeight());
         const bool ink = !trig;
         cv.text(spec::kFontBold8, juce::String(s + 1).toRawUTF8(), r.getX() + 3, r.getY() + 3, ink);
         const bool valueHere = extras && gr.extra(s) != 0;   // (a value is always on a trig: no trig dot under it)
-        if (gr.mark > 0 && gr.mark < 7 && hasTrig && !valueHere) cv.fillRect(r.getCentreX() - 2, r.getBottom() - 8, 4, 4, ink);
+        if (((gr.mark > 0 && gr.mark < 7) || gr.mark == 9) && hasTrig && !valueHere) cv.fillRect(r.getCentreX() - 2, r.getBottom() - 8, 4, 4, ink);
         if (gr.mark == 0 && ((gr.lockTrigs >> s) & 1)) {   // a trigless lock: a hollow box
             const int bx = r.getCentreX() - 3, by = r.getBottom() - 10;
             for (int c = 0; c < 7; ++c) { cv.set(bx + c, by, ink); cv.set(bx + c, by + 6, ink); cv.set(bx, by + c, ink); cv.set(bx + 6, by + c, ink); }
@@ -162,6 +162,7 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
             std::vector<std::string> lines;
             if (gr.mark == 4) lines.push_back(mnm::mddump::conditionName(v));
             else if (gr.mark == 5) lines.push_back((v > 0 ? "+" : "") + std::to_string(v));
+            else if (gr.mark == 9) lines.push_back("P" + std::to_string(v));   // the pool slot
             else {
                 lines.push_back("1/" + std::to_string(16 * mnm::mddump::retrigHits(uint8_t(v))));
                 if (const int n = mnm::mddump::retrigSteps(uint8_t(v)); n > 1) lines.push_back("X" + std::to_string(n));   // (the tiny font is upper case)
@@ -316,11 +317,11 @@ void MdTrackKeys::mouseDown(const juce::MouseEvent& e)
                 }
                 return;
             }
-            if (m_grid.mark >= 4 && m_grid.mark <= 6 && !e.mods.isAnyModifierKeyDown() && !e.mods.isPopupMenu()) {   // an extras window: set / clear,
+            if (m_grid.extrasWindow() && !e.mods.isAnyModifierKeyDown() && !e.mods.isPopupMenu()) {   // an extras window: set / clear,
                 if (s >= m_grid.length) return;                                                    // a drag paints it over the keys
                 m_paintOn = m_grid.extra(s) == 0;
                 m_painting = true; m_paintLast = s;
-                if (onExtraPaint) onExtraPaint(s, m_grid.mark - 4, m_paintOn, true);
+                if (onExtraPaint) onExtraPaint(s, m_grid.extraKind(), m_paintOn, true);
                 return;
             }
             if (m_grid.mark > 0 && m_grid.mark <= 3 && !e.mods.isAnyModifierKeyDown() && !e.mods.isPopupMenu()) {   // an edit window: the mark flips,
@@ -392,7 +393,7 @@ void MdTrackKeys::mouseDrag(const juce::MouseEvent& e)
     m_paintLast = s;
     if (m_grid.mark >= 7) return;
     if (m_grid.mark >= 4) {   // an extras window: the value set / cleared
-        if ((m_grid.extra(s) != 0) != m_paintOn && onExtraPaint) onExtraPaint(s, m_grid.mark - 4, m_paintOn, false);
+        if ((m_grid.extra(s) != 0) != m_paintOn && onExtraPaint) onExtraPaint(s, m_grid.extraKind(), m_paintOn, false);
         return;
     }
     if (m_grid.mark > 0) {   // an edit window: the mark
@@ -422,8 +423,8 @@ void MdTrackKeys::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhe
     if (key < 0 || s >= m_grid.length) return;
     m_lastWheel = now;
     if (m_grid.mark == 8) { if (onLaneWheel) onLaneWheel(s, e.mods.isShiftDown() ? 8 * dir : dir); return; }
-    if (e.mods.isAltDown()) { if (onExtraAltWheel) onExtraAltWheel(s, m_grid.mark - 4, dir); return; }
-    if (onExtraWheel) onExtraWheel(s, m_grid.mark - 4, (d > 0) != w.isReversed ? 1 : -1, e.mods.isShiftDown());
+    if (e.mods.isAltDown()) { if (onExtraAltWheel) onExtraAltWheel(s, m_grid.extraKind(), dir); return; }
+    if (onExtraWheel) onExtraWheel(s, m_grid.extraKind(), (d > 0) != w.isReversed ? 1 : -1, e.mods.isShiftDown());
 }
 
 void MdTrackKeys::mouseMove(const juce::MouseEvent& e)
@@ -439,8 +440,8 @@ void MdTrackKeys::mouseMove(const juce::MouseEvent& e)
     if (m_grid.on && m_grid.mark == 7) { setTooltip("Generate. Click key N: N hits a page, even (Euclidean). Alt+Shift+click: a second generator. B: how they combine. Wheel / Shift+wheel: rotate. Shift: random. Alt: every Nth"); return; }
     if (m_grid.on && m_grid.mark == 8) { setTooltip("Lock lane (the knob touched last). Drag: draw. Shift+drag: ramp. Alt: clear. Wheel: nudge"); return; }
     if (m_grid.on && m_grid.mark >= 4) {
-        static const char* const what[3] = {"Condition", "Micro-timing", "Retrig"};
-        setTooltip(juce::String(what[m_grid.mark - 4]) + ". Click: set / clear. Wheel: change"
+        static const char* const what[4] = {"Condition", "Micro-timing", "Retrig", "Sound lock (the trig plays a pool sound: MENU > SOUND POOL)"};
+        setTooltip(juce::String(what[m_grid.extraKind()]) + ". Click: set / clear. Wheel: change"
                    + (m_grid.mark == 6 ? ". Shift+wheel: length. Alt+wheel: fade" : m_grid.mark == 5 ? ". Alt+wheel: the track's speed" : ""));
         return;
     }

@@ -52,8 +52,8 @@ mnm::mddump::Dump MdProcessor::bankDump() const
     std::shared_ptr<const SeqBank> bank;
     { const juce::SpinLock::ScopedLockType l(m_bankLock); bank = m_bank; }
     std::vector<uint8_t> bytes;
+    auto add = [&](const std::vector<uint8_t>& m) { bytes.insert(bytes.end(), m.begin(), m.end()); };
     if (bank) {
-        auto add = [&](const std::vector<uint8_t>& m) { bytes.insert(bytes.end(), m.begin(), m.end()); };
         for (int s = 0; s < 64; ++s) if (bank->hasKit[size_t(s)]) add(mnm::mddump::encodeKit(bank->kits[size_t(s)]));
         for (int s = 0; s < 128; ++s)
             if (bank->hasPattern[size_t(s)]) {
@@ -62,6 +62,15 @@ mnm::mddump::Dump MdProcessor::bankDump() const
             }
         for (int s = 0; s < 32; ++s) if (bank->hasSong[size_t(s)]) add(mnm::mddump::encodeSong(bank->songs[size_t(s)]));
     }
+    for (int s = 0; s < kScenes; ++s) {   // the set data: the scenes and the sound pool
+        if (sceneLocks(s) == 0) continue;
+        mnm::mddump::SceneData sc;
+        sc.index = s;
+        for (int i = 0; i < kSceneSlots; ++i) if (const int v = sceneValue(s, i); v >= 0) sc.locks.push_back({uint16_t(i), uint8_t(v)});
+        add(mnm::mddump::encodeScene(sc));
+    }
+    const auto pool = soundPool();
+    for (int i = 0; i < mnm::mddump::kPoolSlots; ++i) if (pool->used[size_t(i)]) add(mnm::mddump::encodePoolSound(pool->s[size_t(i)]));
     return mnm::mddump::parseDump(bytes.data(), bytes.size(), "bank");
 }
 
@@ -153,6 +162,15 @@ void MdProcessor::setPatternBank(const juce::String& projectId, const juce::Stri
     m_bankProjectId = projectId;
     m_bankName = name;
     m_bankGlobals = dump.globals;
+    if (!dump.scenes.empty()) {   // a project saved with the set's scenes / pool brings them back
+        for (int s = 0; s < kScenes; ++s) setSceneData(s, {});
+        for (const auto& sc : dump.scenes) {
+            std::vector<int8_t> d(static_cast<size_t>(kSceneSlots), int8_t(-1));
+            for (const auto& [slot, v] : sc.locks) if (slot < kSceneSlots) d[slot] = int8_t(v);
+            setSceneData(sc.index, d);
+        }
+    }
+    if (!dump.pool.empty()) setSoundPool(dump.pool);
     m_bankFresh.store(true);
 }
 
@@ -255,6 +273,10 @@ void MdProcessor::seqNext(double origin, const SeqBank* bank, const std::shared_
             m_chainPos = (m_chainPos + 1) % n;
             slot = m_chain[size_t(m_chainPos)].load();
             m_patternSeen = slot; m_ptnPending.store(slot); m_programChange.store(slot); triggerAsyncUpdate();   // the PTN follows
+        }
+        if (m_tempReturn >= 0 && m_seqQueued == m_tempReturn && slot == m_tempReturn) {   // TEMP JUMP's way back: the PTN follows
+            m_patternSeen = slot; m_ptnPending.store(slot); m_programChange.store(slot); triggerAsyncUpdate();
+            m_tempReturn = -1;
         }
         m_seqQueued = -1;
         seqStart(m_seg, slot, 0, 64, -1, 0, origin, bank, hold, atEnginePos);
@@ -360,6 +382,7 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
     {
         const juce::SpinLock::ScopedLockType l(m_bankLock);
         bank = m_bank;
+        m_poolAudio = m_pool;   // this block's sound pool (sound locks)
     }
     m_seqTrigs.clear();
     const bool song = m_seqMode->load() >= 0.5f;
@@ -388,6 +411,16 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
     const int want = juce::jlimit(0, 127, int(std::lround(m_patternParam->load())));
     if (m_ptnPending.load() < 0 && want != m_patternSeen) {
         m_patternSeen = want; m_seqQueued = want == m_seg.slot ? -1 : want;
+        // PATTERN CHANGE: SEQUENTIAL waits for the end of the pattern (the MD); the others take over at once, from the
+        // first step (DIRECT START), at the same position (DIRECT JUMP), or for one pass and back (TEMP JUMP)
+        const int mode = m_ptnChange ? juce::jlimit(0, 3, int(std::lround(m_ptnChange->load()))) : 0;
+        if (m_seqQueued >= 0 && mode != kChangeSequential && m_seqRunning && m_seg.valid && !song) {
+            m_ptnJump = m_seqQueued;
+            m_jumpMode = mode;
+            m_tempReturn = mode == kChangeTempJump ? (m_tempReturn >= 0 ? m_tempReturn : m_seg.slot) : -1;
+        } else {
+            m_tempReturn = -1;
+        }
         bool inChain = false;   // a pattern chosen another way ends a chain
         for (int i = 0; i < juce::jlimit(0, 16, m_chainLen.load()); ++i) inChain = inChain || m_chain[size_t(i)].load() == want;
         if (!inChain) m_chainLen.store(0);
@@ -450,10 +483,15 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
                 seqNext(m_seg.endClock(), bank.get(), bank, -1.0, true);
         }
     }
-    if (m_ptnJump >= 0 && !song) {   // a GATE / MOMENTARY pattern note: that pattern from its first step, now
+    if (m_ptnJump >= 0 && !song) {   // a GATE / MOMENTARY pattern note, or a DIRECT / TEMP change: that pattern now
+        const double from = m_jumpMode == kChangeDirectJump && m_seg.valid ? m_seg.origin : c0;   // DIRECT JUMP: where the old one was
         m_prevSeg.valid = false;   // the old pattern stops where it is
         m_seqQueued = m_ptnJump;
-        seqNext(c0, bank.get(), bank, 0.0, false);
+        seqNext(from, bank.get(), bank, 0.0, false);
+        if (m_jumpMode == kChangeTempJump && m_tempReturn >= 0 && m_seg.valid) {   // one pass, then the pattern before
+            m_seg.steps = m_seg.player.span();
+            m_seqQueued = m_tempReturn;
+        }
     }
     m_ptnJump = -1;
     m_seqExpect = c1;

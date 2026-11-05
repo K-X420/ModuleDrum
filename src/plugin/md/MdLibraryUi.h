@@ -145,6 +145,7 @@ public:
         int ptnMode = 1, ptnFrom = -1, ptnBank = 0, startNote = -1, stopNote = -1;
         int ctrlIn = 1;   // 1 ON, 0 OFF
         int tempoOut = 0, ctrlOut = 0;   // MIDI clock out, START / STOP out (1 ON)
+        int local = 1;                   // LOCAL: 1 ON, 0 OFF (the knobs and keys only send MIDI)
         std::array<int, 2> inTrack{16, 16}, inGate{1, 1}, inSense{0, 0}, inMin{0, 0}, inMax{127, 127};   // INPUT TRIGS (A, B)
     };
     std::function<Values()> get;
@@ -239,6 +240,29 @@ private:
     static constexpr int kCols = 4, kRows = 12;
     juce::Rectangle<int> slotRect(int i) const;
     juce::Rectangle<int> buttonRect(int b) const;   // 0 RENAME, 1 CLEAR, 2..5 RAM 1..4 >, 6 RESAMPLE Tn
+    int m_sel = 0;
+};
+
+// The SOUND POOL: 64 sounds kept with the set. STORE puts the selected track's sound in the selected slot; the slot
+// selected is what a click in GRID's P (sound lock) window gives a trig.
+class MdPoolPanel : public juce::Component, public juce::SettableTooltipClient {
+public:
+    static constexpr int kS = 3, kSlots = 64;
+    std::function<juce::String(int slot)> name;   // empty: a free slot
+    std::function<void(int slot)> onStore, onRename, onClear, onPlay, onSelect;
+    std::function<int()> track;
+    std::function<void()> onClose;
+    void open() { setVisible(true); toFront(true); grabKeyboardFocus(); repaint(); }
+    void select(int slot);
+    int selected() const { return m_sel; }
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress& k) override;
+private:
+    static constexpr int kCols = 4, kRows = 16;
+    juce::Rectangle<int> slotRect(int i) const;
+    juce::Rectangle<int> buttonRect(int b) const;   // 0 STORE Tn, 1 RENAME, 2 CLEAR, 3 PLAY ON Tn
     int m_sel = 0;
 };
 

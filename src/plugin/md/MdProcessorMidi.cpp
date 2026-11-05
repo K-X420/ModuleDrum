@@ -27,6 +27,7 @@ MdProcessor::MidiSettings MdProcessor::midiSettings() const
     s.patternNoteMode = m_ptnNoteMode.load();
     s.ctrlIn = m_ctrlIn.load();
     s.tempoOut = m_tempoOut.load();
+    s.local = m_local.load();
     for (int i = 0; i < 2; ++i) {
         s.inTrack[size_t(i)] = m_inTrig[i][0].load(); s.inGate[size_t(i)] = m_inTrig[i][1].load(); s.inSense[size_t(i)] = m_inTrig[i][2].load();
         s.inMin[size_t(i)] = m_inTrig[i][3].load(); s.inMax[size_t(i)] = m_inTrig[i][4].load();
@@ -50,6 +51,8 @@ void MdProcessor::setMidiSettings(const MidiSettings& s)
     m_ptnNoteMode.store(juce::jlimit(0, 2, s.patternNoteMode));
     m_ctrlIn.store(s.ctrlIn);
     m_tempoOut.store(s.tempoOut);
+    if (m_local.load() && !s.local) localSnapshot();   // LOCAL OFF from here: the sound keeps the knobs as they are
+    m_local.store(s.local);
     for (int i = 0; i < 2; ++i) {
         m_inTrig[i][0].store(juce::jlimit(0, 16, s.inTrack[size_t(i)])); m_inTrig[i][1].store(juce::jlimit(0, 127, s.inGate[size_t(i)]));
         m_inTrig[i][2].store(juce::jlimit(0, 127, s.inSense[size_t(i)])); m_inTrig[i][3].store(juce::jlimit(0, 127, s.inMin[size_t(i)]));
@@ -79,6 +82,7 @@ MdProcessor::MidiSettings MdProcessor::fromGlobal(const mnm::mddump::Global& g, 
     s.ctrlIn = g.ctrlIn();   // the global's CTRL IN (off: the host's play / stop don't run the sequencer)
     s.tempoOut = (g.flags & 0x20) != 0;
     s.ctrlOut = (g.flags & 0x40) != 0;
+    s.local = g.localOn;
     for (int i = 0; i < 2; ++i) {
         s.inTrack[size_t(i)] = juce::jmin(16, int(g.inputTrack[i])); s.inGate[size_t(i)] = g.inputGate[i] & 127; s.inSense[size_t(i)] = g.inputSense[i] & 127;
         s.inMin[size_t(i)] = g.inputMin[i] & 127; s.inMax[size_t(i)] = g.inputMax[i] & 127;
@@ -161,7 +165,7 @@ void MdProcessor::patternNote(int note, bool on)
     if (m_ptnHeldNote < 0) m_ptnMomentBack = running ? m_seg.slot : -1;   // MOMENTARY: what comes back
     m_ptnHeldNote = note;
     choose(act);
-    if (running) m_ptnJump = act;
+    if (running) { m_ptnJump = act; m_jumpMode = kChangeDirectStart; m_tempReturn = -1; }
     else { m_seqQueued = act; start(); }
 }
 
@@ -393,6 +397,7 @@ void MdProcessor::handleCc(int channel, int cc, int value)
         if (k < 0 || k > 23) continue;
         const int t = (channel - 1) * 4 + i;
         m_outSeen[size_t(t)][size_t(k)] = int16_t(value);
+        m_localVal[size_t(t)][size_t(k)].store(int16_t(juce::jlimit(0, 127, value)));   // LOCAL OFF: what comes in is the sound
         if (k < 8) set(knobId(t, k), float(value));
         else if (k < 16) set(fxId(t, k - 8), float(value));
         else if (k < 21) {

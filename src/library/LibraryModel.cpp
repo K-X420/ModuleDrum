@@ -197,6 +197,17 @@ juce::Result LibraryModel::saveMdPatterns(const juce::String& projectId, const m
         mnm::mdproject::putSong(d, s.position, s);
         changes.add("Song " + juce::String(s.position + 1).paddedLeft('0', 2) + (old ? " edited" : " added") + " in the plugin");
     }
+    {   // the set data: the scenes and the sound pool, as they are in the plugin
+        auto bytes = [](const auto& items, auto enc) { std::vector<uint8_t> b; for (const auto& i : items) { const auto x = enc(i); b.insert(b.end(), x.begin(), x.end()); } return b; };
+        if (bytes(bank.scenes, mnm::mddump::encodeScene) != bytes(d.scenes, mnm::mddump::encodeScene)) {
+            d.scenes = bank.scenes;
+            changes.add("Scenes saved from the plugin");
+        }
+        if (bytes(bank.pool, mnm::mddump::encodePoolSound) != bytes(d.pool, mnm::mddump::encodePoolSound)) {
+            d.pool = bank.pool;
+            changes.add("Sound pool saved from the plugin");
+        }
+    }
     if (changesOut) *changesOut = changes;
     if (projectIdOut) *projectIdOut = projectId;
     if (changes.isEmpty()) return juce::Result::ok();   // nothing differs: no new version

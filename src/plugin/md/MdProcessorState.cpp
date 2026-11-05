@@ -17,7 +17,7 @@ int MdProcessor::kitParam(int t, int p) const
 {
     if (const auto* k = m_kitOverride.load()) return juce::jlimit(0, 127, int(k->params[t][p]));
     const int w = m_ctlWrite[size_t(t)][size_t(p)];
-    return w >= 0 ? w : trackParam(t, p);
+    return w >= 0 ? w : soundParam(t, p);   // (LOCAL OFF: the sound's own copy, not the plugin's knobs)
 }
 
 int MdProcessor::applyKit(const mnm::md::Kit& kit)
@@ -321,6 +321,7 @@ void MdProcessor::getStateInformation(juce::MemoryBlock& destData)
         g.setProperty("pnm", ms.patternNoteMode, nullptr);
         g.setProperty("ctrlin", ms.ctrlIn, nullptr);
         g.setProperty("tempoout", ms.tempoOut, nullptr);
+        g.setProperty("local", ms.local, nullptr);
         g.setProperty("ctrlout", ms.ctrlOut, nullptr);
         juce::String inp;   // INPUT TRIGS: A then B, track gate sens vmin vmax, two hex digits each
         for (int i = 0; i < 2; ++i)
@@ -343,6 +344,8 @@ void MdProcessor::getStateInformation(juce::MemoryBlock& destData)
     state.appendChild(shadowsToTree(), nullptr);
     state.removeChild(state.getChildWithName("SCENES"), nullptr);
     state.appendChild(scenesToTree(), nullptr);
+    state.removeChild(state.getChildWithName("POOL"), nullptr);
+    state.appendChild(poolToTree(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
@@ -377,6 +380,7 @@ void MdProcessor::setStateInformation(const void* data, int sizeInBytes)
     samplesFromTree(apvts.state.getChildWithName("SAMPLES"));
     shadowsFromTree(apvts.state.getChildWithName("SHADOWS"));
     scenesFromTree(apvts.state.getChildWithName("SCENES"));
+    poolFromTree(apvts.state.getChildWithName("POOL"));
     if (const auto g = apvts.state.getChildWithName("MIDI"); g.isValid()) {
         auto ms = defaultMidiSettings();
         ms.baseChannel = int(g.getProperty("base", 0));
@@ -385,6 +389,7 @@ void MdProcessor::setStateInformation(const void* data, int sizeInBytes)
         ms.patternNoteMode = int(g.getProperty("pnm", 1));
         ms.ctrlIn = bool(g.getProperty("ctrlin", true));
         ms.tempoOut = bool(g.getProperty("tempoout", false));
+        ms.local = bool(g.getProperty("local", true));
         ms.ctrlOut = bool(g.getProperty("ctrlout", false));
         if (const auto inp = g.getProperty("inputs").toString(); inp.length() == 20)
             for (int i = 0; i < 2; ++i) {

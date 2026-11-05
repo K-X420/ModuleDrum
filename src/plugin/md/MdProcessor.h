@@ -175,6 +175,9 @@ public:
         // TEMPO OUT / CTRL OUT (as the MD's): MIDI clock out (24 a quarter note, also while stopped), and START / STOP /
         // CONTINUE with the song position out
         bool tempoOut = false, ctrlOut = false;
+        // LOCAL (the MD's local control): OFF, the plugin's knobs and track keys only send MIDI (CCs and notes, on the
+        // base channel); the sound follows what comes in (and kit loads), as the unit with LOCAL off
+        bool local = true;
         // INPUT TRIGS (as the MD's global input page), per input (0 = A, the side-chain's left; 1 = B, its right): the
         // track it trigs (16 = none), GATE (the rise that trigs), SENS (the velocity's slope), VMIN, VMAX. Factory values.
         std::array<int, 2> inTrack{16, 16}, inGate{1, 1}, inSense{0, 0}, inMin{0, 0}, inMax{127, 127};
@@ -183,6 +186,16 @@ public:
     MidiSettings midiSettings() const;
     void setMidiSettings(const MidiSettings& s);
     std::vector<mnm::mddump::Global> bankGlobals() const { return m_bankGlobals; }   // the bank project's globals
+    // SOUND POOL (as the Analog Rytm's): sounds kept with the set (and its Library project) that a step's sound lock plays
+    // on its track, from that trig to the track's next. Message thread edits; the audio thread reads a snapshot.
+    struct SoundPool { std::array<mnm::mddump::PoolSound, mnm::mddump::kPoolSlots> s{}; std::array<bool, mnm::mddump::kPoolSlots> used{}; };
+    std::shared_ptr<const SoundPool> soundPool() const { const juce::SpinLock::ScopedLockType l(m_bankLock); return m_pool; }
+    void setPoolSound(int slot, const mnm::mddump::PoolSound* s);   // null clears the slot
+    void setSoundPool(const std::vector<mnm::mddump::PoolSound>& sounds);   // replaces the whole pool
+    int soundLockOf(int t) const { return m_soundLock[size_t(t)].load(); }   // the slot playing on t, -1 its own sound
+    int devTrackMachine(int t) const { return trackMachine(t); }   // dev/tests (audio thread data)
+    int devPlayingSlot() const { return m_seg.slot; }
+    void auditionPool(int t, int slot) { m_auditionPool[size_t(t)].store(slot); }   // plays the pool sound on t once
     // SCENES (as the Octatrack's): 16 scenes of locked values laid over the kit, the pattern's locks and the LFOs'
     // targets. XFADE morphs every knob locked in scene A or B between the two; a side without that lock gives the knob's
     // own value. Slot i: t * 24 + p (a track parameter, as seqParam), then kTracks * 24 + 8 fx + k (a master effect).
@@ -395,7 +408,7 @@ private:
     std::array<int32_t, 64> m_inBlock{};
     // seq: index into m_seqTrigs (a sequencer trig with its locks / slides / accent), -1 = a MIDI note or the UI
     // seq: index into m_seqTrigs (a sequencer trig), -1 a note or the UI; echo: false for a MIDI note (not sent out again)
-    struct PendingTrig { int track; double enginePos; int velocity; int seq = -1; bool echo = true; bool volume = false; };   // volume: the velocity is the trig's volume whatever VEL MODE says (an input trig)   // engine frames from the current FIFO read point
+    struct PendingTrig { int track; double enginePos; int velocity; int seq = -1; bool echo = true; bool volume = false; int pool = -1; };   // volume: the velocity is the trig's volume whatever VEL MODE says (an input trig)   // engine frames from the current FIFO read point
     std::vector<PendingTrig> m_pending;
 
     // ---- pattern playback (audio thread unless noted)
@@ -446,6 +459,17 @@ private:
     int sceneMix(int i, int base) const;
     juce::ValueTree scenesToTree() const;
     void scenesFromTree(const juce::ValueTree& v);
+    std::shared_ptr<const SoundPool> m_pool = std::make_shared<SoundPool>(), m_poolOld, m_poolAudio;   // (m_bankLock)
+    std::array<std::atomic<int>, kTracks> m_soundLock{};   // audio thread: the pool slot a sound lock plays, -1 none
+    std::array<std::atomic<int>, kTracks> m_auditionPool{};   // message thread: a pool sound to play on t, -1 none
+    const mnm::mddump::PoolSound* soundLocked(int t) const   // audio thread (m_poolAudio, this block's)
+    {
+        const int s = m_soundLock[size_t(t)].load();
+        return s >= 0 && m_poolAudio && m_poolAudio->used[size_t(s)] ? &m_poolAudio->s[size_t(s)] : nullptr;
+    }
+    int trackMachine(int t) const;   // the machine t plays now: a sound lock's, the pattern kit's, or its own
+    juce::ValueTree poolToTree() const;
+    void poolFromTree(const juce::ValueTree& v);
     std::atomic<float> m_songTempo{-1.0f};               // a SONG row's tempo, until the BPM parameter has it (internal PLAY only)
     std::atomic<int> m_programChange{-1};                // a MIDI program change for the message thread (PATTERN follows)
     bool m_seqRunning = false;
@@ -509,7 +533,11 @@ private:
     void trigLocks(int t, const mnm::md::SeqTrig* s, int pos = 0);   // a trig's locks and slides (none: a MIDI / UI trig releases them)
     // MIDI settings and out
     std::atomic<int> m_baseCh{0}, m_pcMode{1}, m_midiOutMode{0}, m_pcChannel{0}, m_ptnNoteMode{1};
-    std::atomic<bool> m_ctrlIn{true}, m_tempoOut{false}, m_ctrlOut{false};
+    std::atomic<bool> m_ctrlIn{true}, m_tempoOut{false}, m_ctrlOut{false}, m_local{true};
+    // LOCAL OFF: the sound's own copy of the 24 knobs (what came in as CCs, or the kit), the plugin's knobs only go out
+    std::array<std::array<std::atomic<int16_t>, 24>, kTracks> m_localVal{};
+    void localSnapshot() { for (int t = 0; t < kTracks; ++t) for (int p = 0; p < 24; ++p) m_localVal[size_t(t)][size_t(p)].store(int16_t(trackParam(t, p))); }
+    int soundParam(int t, int p) const { return m_local.load() ? trackParam(t, p) : int(m_localVal[size_t(t)][size_t(p)].load()); }
     double m_freeClock = 0;     // TEMPO OUT while stopped: the clocks, free running at the tempo
     double m_clockOutFrom = 0;  // the first clock to send after a START / CONTINUE (the song position's 16th)
     void midRealtime(int pos, uint8_t status);
@@ -532,6 +560,9 @@ private:
     // pattern notes (audio thread): the held note, the pattern MOMENTARY brings back (-1 = stop), a pattern to start at
     // once, the sequencer halted by STOP / a GATE note-off, a pattern the parameter is still to catch up with
     int m_ptnHeldNote = -1, m_ptnMomentBack = -1, m_ptnJump = -1;
+    // PATTERN CHANGE: how the jump to m_ptnJump starts (DIRECT JUMP keeps the position), and TEMP JUMP's way back
+    int m_jumpMode = kChangeDirectStart, m_tempReturn = -1;
+    std::atomic<float>* m_ptnChange = nullptr;
     std::atomic<int> m_ptnPending{-1};   // cleared by the message thread once the parameter shows it
     bool m_seqHalted = false;
     void patternNote(int note, bool on);
@@ -550,7 +581,13 @@ private:
     void sendCc(int t, int p, int value, int pos);   // p 0..23, 24 = level, by the CC map
     void scanKnobsOut(int pos);
     int kitParam(int t, int p) const;   // the knob's own value (a pattern's kit until loaded, a CTR write, else the parameter)
-    int seqParam(int t, int p) const { const int v = m_lockVal[size_t(t)][size_t(p)]; return v >= 0 ? v : kitParam(t, p); }
+    int seqParam(int t, int p) const
+    {
+        const int v = m_lockVal[size_t(t)][size_t(p)];
+        if (v >= 0) return v;
+        if (const auto* s = soundLocked(t)) return s->params[p] & 0x7F;   // a sound lock: the pool sound under the step's locks
+        return kitParam(t, p);
+    }
 };
 
 } // namespace mnm::plugin::md

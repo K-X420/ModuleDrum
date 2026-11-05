@@ -77,7 +77,7 @@ void MdEditor::doEdit(int slot, const juce::String& label, const std::function<v
     seqOn();
     const auto now = juce::Time::currentTimeMillis();
     // (a GENERATE run, 50000 and up, is one step however long it takes)
-    const bool merge = coalesce >= 0 && !m_undo.empty() && m_undo.back().slot == slot && m_lastCoalesce == coalesce && (now - m_lastEditMs < 1000 || coalesce >= 50000);
+    const bool merge = coalesce >= 0 && !m_undo.empty() && m_undo.back().scene < 0 && m_undo.back().song < 0 && m_undo.back().slot == slot && m_lastCoalesce == coalesce && (now - m_lastEditMs < 1000 || coalesce >= 50000);
     if (!merge) {
         m_undo.push_back({slot, m_proc.bankPattern(slot), nullptr, label});
         if (m_undo.size() > 200) m_undo.erase(m_undo.begin());
@@ -107,11 +107,37 @@ void MdEditor::doEditSong(int slot, const juce::String& label, const std::functi
     m_songEd.repaint();
 }
 
+void MdEditor::doEditScene(int scene, const juce::String& label, const std::function<void()>& fn, int coalesce)
+{
+    const auto now = juce::Time::currentTimeMillis();
+    const int key = coalesce >= 0 ? 100000 + scene * MdProcessor::kSceneSlots + coalesce : -1;
+    const bool merge = key >= 0 && !m_undo.empty() && m_undo.back().scene == scene && m_lastCoalesce == key && now - m_lastEditMs < 1000;
+    if (!merge) {
+        UndoStep u;
+        u.scene = scene; u.sceneBefore = m_proc.sceneData(scene); u.label = label;
+        m_undo.push_back(std::move(u));
+        if (m_undo.size() > 200) m_undo.erase(m_undo.begin());
+    }
+    m_redo.clear();
+    m_lastCoalesce = key;
+    m_lastEditMs = now;
+    fn();
+    m_undo.back().sceneAfter = m_proc.sceneData(scene);
+}
+
+void MdEditor::sceneUndone()
+{
+    m_lastCoalesce = -1;
+    for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master}) { pg->pull(); pg->repaint(); }
+    refreshGrid();
+}
+
 void MdEditor::undo()
 {
     if (m_undo.empty()) return;
     auto s = m_undo.back();
     m_undo.pop_back();
+    if (s.scene >= 0) { m_proc.setSceneData(s.scene, s.sceneBefore); m_redo.push_back(s); sceneUndone(); return; }
     if (s.song >= 0) { m_proc.setBankSong(s.song, s.songBefore); m_redo.push_back(s); m_lastCoalesce = -1; m_songEd.repaint(); return; }
     m_proc.setBankPattern(s.slot, s.before);
     m_redo.push_back(s);
@@ -125,6 +151,7 @@ void MdEditor::redo()
     if (m_redo.empty()) return;
     auto s = m_redo.back();
     m_redo.pop_back();
+    if (s.scene >= 0) { m_proc.setSceneData(s.scene, s.sceneAfter); m_undo.push_back(s); sceneUndone(); return; }
     if (s.song >= 0) { m_proc.setBankSong(s.song, s.songAfter); m_undo.push_back(s); m_lastCoalesce = -1; m_songEd.repaint(); return; }
     m_proc.setBankPattern(s.slot, s.after);
     m_undo.push_back(s);
@@ -148,7 +175,7 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
     if (!mods.isAnyModifierKeyDown() && (k.getKeyCode() == 'N' || k.getKeyCode() == 'n')) { toggleScenes(); return true; }   // SCENES
     if (m_heldScene >= 0 && k.getKeyCode() == juce::KeyPress::escapeKey) { holdScene(-1); return true; }   // let the held scene go
     if (m_heldScene >= 0 && (k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey)) {   // its locks go
-        m_proc.setSceneData(m_heldScene, {});
+        doEditScene(m_heldScene, "clear scene", [this] { m_proc.setSceneData(m_heldScene, {}); });
         flash("SCENE CLEARED");
         for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master}) pg->pull();
         refreshGrid();
@@ -186,10 +213,12 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
             genApply(euclidSay());
             return true;
         }
-        const int x = !m_proc.extrasOn() ? -1 : code == 'C' || code == 'c' ? 0 : code == 'T' || code == 't' ? 1 : code == 'R' || code == 'r' ? 2 : -1;
-        if (x >= 0) {   // EXTRAS: the CONDITION / MICRO-TIMING / RETRIG edit window (again: back to the trigs)
-            static const char* const names[3] = {"COND", "MICRO", "RETRIG"};
-            m_markMode = m_markMode == x + 4 ? 0 : x + 4;
+        const int x = !m_proc.extrasOn() ? -1 : code == 'C' || code == 'c' ? 0 : code == 'T' || code == 't' ? 1 : code == 'R' || code == 'r' ? 2
+                    : code == 'P' || code == 'p' ? 3 : -1;
+        if (x >= 0) {   // EXTRAS: the CONDITION / MICRO-TIMING / RETRIG / SOUND LOCK edit window (again: back to the trigs)
+            static const char* const names[4] = {"COND", "MICRO", "RETRIG", "SND LOCK"};
+            const int mode = x == 3 ? 9 : x + 4;
+            m_markMode = m_markMode == mode ? 0 : mode;
             flash(m_markMode ? juce::String(names[x]) : juce::String("TRIGS"));
             refreshGrid();
             return true;
@@ -323,7 +352,7 @@ int MdEditor::laneKitValue() const
 
 void MdEditor::clearLayer(int page)
 {
-    static const char* const names[9] = {"", "ACC", "SLD", "SWG", "COND", "TIME", "RTRG", "", "LANE"};
+    static const char* const names[10] = {"", "ACC", "SLD", "SWG", "COND", "TIME", "RTRG", "", "LANE", "SND"};
     const int t = m_track, mode = m_markMode, lane = m_laneParam;
     doEdit(editSlot(), "clear layer", [&](mnm::mddump::Pattern& x) {
         for (int s = page * 16; s < page * 16 + 16 && s < 64; ++s) {
@@ -336,11 +365,12 @@ void MdEditor::clearLayer(int page)
                 case 5: x.micro[t][s] = 0; break;
                 case 6: x.retrig[t][s] = 0; break;
                 case 8: x.clearLock(t, lane, s); break;
+                case 9: x.soundLock[t][s] = 0; break;
                 default: break;
             }
         }
     });
-    flash(juce::String(names[juce::jlimit(0, 8, mode)]) + " CLR");
+    flash(juce::String(names[juce::jlimit(0, 9, mode)]) + " CLR");
     for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo}) pg->pull();
 }
 

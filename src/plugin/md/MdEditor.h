@@ -82,9 +82,12 @@ public:
         uint64_t heldSet = 0;   // every held step (held is the first of them: the knobs show its locks)
         uint64_t lockTrigs = 0;           // EXTRAS: trigless locks (an empty key with a box)
         std::array<int8_t, 64> fade{};    // RETRIG: each retrig's fade
+        std::array<uint8_t, 64> sound{};  // SOUND LOCK: the pool slot + 1, 0 none
         int eu1 = 0, eu2 = 0;             // GENERATE: the Euclidean generators' pulses (keys E1 / E2), 0 none
-        bool operator==(const Grid& o) const { return lockTrigs == o.lockTrigs && fade == o.fade && eu1 == o.eu1 && eu2 == o.eu2 && trackLen == o.trackLen && lane == o.lane && laneKit == o.laneKit && heldSet == o.heldSet && mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
-        int extra(int s) const { return mark == 4 ? cond[size_t(s)] : mark == 5 ? micro[size_t(s)] : mark == 6 ? retrig[size_t(s)] : 0; }
+        bool operator==(const Grid& o) const { return lockTrigs == o.lockTrigs && fade == o.fade && sound == o.sound && eu1 == o.eu1 && eu2 == o.eu2 && trackLen == o.trackLen && lane == o.lane && laneKit == o.laneKit && heldSet == o.heldSet && mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
+        int extra(int s) const { return mark == 4 ? cond[size_t(s)] : mark == 5 ? micro[size_t(s)] : mark == 6 ? retrig[size_t(s)] : mark == 9 ? sound[size_t(s)] : 0; }
+        bool extrasWindow() const { return (mark >= 4 && mark <= 6) || mark == 9; }
+        int extraKind() const { return mark == 9 ? 3 : mark - 4; }   // the onExtra* kind: 0 condition, 1 micro, 2 retrig, 3 sound lock
     };
     void setGrid(const Grid& g) { if (!(g == m_grid)) { m_grid = g; repaint(); } }
     // SCENES (N, or Shift+click GRID), as the Octatrack's scene keys: the 16 keys are the scenes. Click: hold one for
@@ -350,8 +353,9 @@ private:
     juce::String importMidiClip(const juce::File& f, int onlyTrack);   // a clip dropped in (onlyTrack: a key's track, -1 the pattern)
     static bool isMidiFile(const juce::String& path);
     void flipStepFlag(int step, int flag);   // a step's accent / slide / swing mark (the all-tracks mask or the track's own)
-    int m_markMode = 0;                      // GRID's edit window: 0 trigs, 1 accent, 2 slide, 3 swing, (EXTRAS) 4 condition, 5 micro, 6 retrig
-    std::array<int, 3> m_lastExtra{11, 6, mnm::mddump::makeRetrig(3, 1)};   // what a click sets: 50%, +6/24, 1/64
+    int m_markMode = 0;                      // GRID's edit window: 0 trigs, 1 accent, 2 slide, 3 swing, (EXTRAS) 4 condition, 5 micro, 6 retrig,
+                                             // 7 GENERATE, 8 lock lane, (EXTRAS) 9 sound lock
+    std::array<int, 4> m_lastExtra{11, 6, mnm::mddump::makeRetrig(3, 1), 1};   // what a click sets: 50%, +6/24, 1/64, pool sound 1
     bool m_fillLatch = false;                // Shift+F: FILL stays on
     // GENERATE (E): one run of the window on a track is one undo step, every change made again from the track as it
     // was when the run began (so hit counts and rotations don't pile up)
@@ -399,13 +403,21 @@ private:
     struct UndoStep {
         int slot = 0; std::shared_ptr<const mnm::mddump::Pattern> before, after; juce::String label;
         int song = -1; std::shared_ptr<const mnm::mddump::Song> songBefore, songAfter;   // a song edit (song >= 0)
+        int scene = -1; std::vector<int8_t> sceneBefore, sceneAfter;                       // a scene edit (scene >= 0)
     };
+    // A scene edit as one undo step; knob turns on one slot within a second (coalesce = the slot) are one step
+    void doEditScene(int scene, const juce::String& label, const std::function<void()>& fn, int coalesce = -1);
+    void sceneUndone();
     void seqOn();   // SEQ ON, when the user sequences (a step placed, REC armed)
     void doEditSong(int slot, const juce::String& label, const std::function<void(mnm::mddump::Song&)>& fn, int coalesce = -1);
     MdSongEditor m_songEd;
     MdMidiPanel m_midiPanel;
     MdSamplePanel m_samplePanel;
     void openSamplePanel();
+    MdPoolPanel m_poolPanel;
+    void openPoolPanel();
+    juce::String poolSay(int v) const;   // "P5 KICK" (v = slot + 1)
+    void wirePoolPanel();
     static int romSlotIndex(int rom) { return rom < 32 ? rom : rom + 16; }   // ROM-01..48 (0..47) -> the UW slot
     void openMidiPanel();
     MdMixer m_mixer;

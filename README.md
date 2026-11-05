@@ -155,14 +155,17 @@ patterns along.
 | Retrig fade (with XTRA on) | RETRIG window: **Alt+wheel** over a retrig fades its hits out (down, to silence at -63) or in (up). The key shows it (V-32) |
 | Trigless locks (with XTRA on) | **Shift+click** an empty step and turn a knob: the step sets those parameters without playing the sound, until the track's next trig. The key shows a hollow box. Click it to take it off. Without XTRA the turn places a trig, as on the MD |
 | Extras: trig conditions, micro-timing, retrigs | Not on a real MD; off until PTN tab **XTRA** is on. Then in GRID, **C / T / R** open the CONDITION / TIME / RETRIG windows. **Click** a trig to give it the last value (click again: clear; drag to paint). **Wheel** over it changes the value (RETRIG: Shift+wheel sets its length). Conditions: 1-99%, FILL / !FILL, PRE / !PRE, NEI / !NEI, 1ST / !1ST, A:B. Hold **F** for fill, **Shift+F** latches it. Extras are saved with the set and in the Library; .syx exports leave them out |
-| Scenes and the crossfader | Not on a real MD (the Octatrack's). **N** or **Shift+click GRID**: the keys are 16 scenes, and the bar's page dots become **XFADE**. **Click** a scene key to hold it: turn knobs on any track or the master effects to lock them in it (it plays whole while held; double-click a knob drops its lock; Delete clears the scene; Esc lets go). **Alt+click** a key: it goes on side A, **Shift+click**: side B. XFADE morphs every knob locked in A or B between the two (a side without that lock: the knob's own value). XFADE, SCENE A and SCENE B are host parameters, so Ableton can automate them. Right-click a key: copy, paste, clear. Saved with the set |
+| Scenes and the crossfader | Not on a real MD (the Octatrack's). **N** or **Shift+click GRID**: the keys are 16 scenes, and the bar's page dots become **XFADE**. **Click** a scene key to hold it: turn knobs on any track or the master effects to lock them in it (it plays whole while held; double-click a knob drops its lock; Delete clears the scene; Esc lets go). **Alt+click** a key: it goes on side A, **Shift+click**: side B. XFADE morphs every knob locked in A or B between the two (a side without that lock: the knob's own value). XFADE, SCENE A and SCENE B are host parameters, so Ableton can automate them. Right-click a key: copy, paste, clear. Ctrl+Z undoes scene edits. Saved with the set, and in the Library project with SAVE PATTERNS + SONGS TO LIBRARY |
+| Sound locks | Not on a real MD (the Analog Rytm's). MENU > **SOUND POOL**: 64 sounds kept with the set (and its Library project). **STORE Tn** puts the selected track's sound in the selected slot; PLAY (or Space) hears it on that track. With PTN tab **XTRA** on, GRID's **P** window: **click** a trig to give it the selected pool sound, **wheel** to step through the pool. That trig plays the pool sound (its machine, knobs and LFO) on its track, under the step's own locks; the track's next trig without one plays its own sound again |
+| Pattern change | PTN tab, **CHNG** (as the Digitakt's): SEQ waits for the end of the pattern (the MD's way), START changes at once from the first step, JUMP at once at the same position, TEMP at once for one pass and then back to the pattern before. A host parameter too |
+| LOCAL off | MIDI SETTINGS, **LOCAL** (as the MD's): off, the plugin's knobs and track keys only send MIDI (CCs and notes on the base channel); the sound follows what comes in (and kit loads), so a DAW or another unit can play it back |
 | MIDI clock out | MIDI SETTINGS > **TEMPO OUT**: clock at 24 a quarter note (also while stopped). **CTRL OUT**: START / STOP, and the song position with CONTINUE when playback jumps |
 | Trig tracks from audio | MIDI SETTINGS > **INPUT TRIGS**: the side-chain's left (A) and right (B) each trig a track, as the MD's input triggers: GATE (how sharp a jump trigs), SENS, VMIN / VMAX (the velocity, as the trig's volume). As on the MD, SENS 0 with VMIN 0 plays nothing |
 | Song tempo | A song row's tempo sets BPM when the plugin's own PLAY runs the song (SYNC off); under Ableton's transport, Ableton's tempo rules |
 | Use the MD as a sound module | MIDI SETTINGS > **CTRL IN OFF**: Ableton's play / stop don't run the sequencer (PLAY does, at Ableton's tempo; LFOs and delay stay in time) |
 | Keep your edits | Saved with the Ableton set; MENU > SAVE PATTERNS + SONGS TO LIBRARY puts them in the Library project |
 | MIDI channel, note map, program change, MIDI out | MENU > MIDI SETTINGS |
-| Play patterns from MIDI notes | MENU > MIDI SETTINGS > PATTERN NOTES: FROM a white key (16 patterns of a bank up the white keys), START / STOP notes; GATE (plays while held), MOMENTARY (the pattern before comes back), QUEUE (next pattern). FROM PROJECT brings in a project's own map, and the global's track outputs (OUT), sync and input trig settings |
+| Play patterns from MIDI notes | MENU > MIDI SETTINGS > PATTERN NOTES: FROM a white key (16 patterns of a bank up the white keys), START / STOP notes; GATE (plays while held), MOMENTARY (the pattern before comes back), QUEUE (next pattern). FROM PROJECT brings in a project's own map, and the global's track outputs (OUT), sync, input trig settings, LOCAL and EXTENDED |
 | Mixer (all 16 levels, pans, mutes, solos, mute groups) | **MIX** on the bar or the **M** key; Shift+click M / S = only that track; hold **Alt** to see the mute groups on the M buttons, **Alt+click** M for the next group (Alt+Shift+click: back) |
 | Browse kits / sounds | Click the KIT or sound selector, then **Up / Down** (on One / Six: presets, or kits after the KIT selector) |
 
@@ -315,9 +318,10 @@ ModuleDrum:
 - The extras (trig conditions, micro-timing, retrigs, a track's own length) are the plugin's own: a real Machinedrum
   has no room for them, so `.syx` exports leave them out. Library previews and MIDI clip export also play the
   plain pattern, without them.
-- From a global, ModuleDrum uses the MIDI settings (key map, channel, sync, program change, pattern notes), the
-  track outputs and the input triggers. EXTENDED MODE and LOCAL are kept in the project but not applied.
-- Scenes are the plugin's own: they are saved with the set, not in `.syx` exports or the Library.
+- From a global, ModuleDrum uses the MIDI settings (key map, channel, sync, program change, pattern notes, LOCAL), the
+  track outputs, the input triggers and EXTENDED MODE.
+- Scenes and the sound pool are the plugin's own: they are saved with the set and in the Library project, not in
+  `.syx` exports (a real MD has no room for them).
 - It has not yet been compared side by side with the hardware.
 
 The Monomodule plugins:

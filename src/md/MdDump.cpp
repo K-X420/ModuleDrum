@@ -173,7 +173,7 @@ bool Pattern::hasExtras() const
     for (int t = 0; t < kTracks; ++t)
         for (int s = 0; s < 64; ++s) if (cond[t][s] || micro[t][s] || retrig[t][s]) return true;
     for (int t = 0; t < kTracks; ++t) if (trackLen[t]) return true;
-    return hasNewExtras();
+    return hasNewExtras() || hasSoundLocks();
 }
 
 bool Pattern::hasNewExtras() const
@@ -185,10 +185,17 @@ bool Pattern::hasNewExtras() const
     return false;
 }
 
+bool Pattern::hasSoundLocks() const
+{
+    for (int t = 0; t < kTracks; ++t)
+        for (int s = 0; s < 64; ++s) if (soundLock[t][s]) return true;
+    return false;
+}
+
 void Pattern::clearStepExtras(int track, int step)
 {
     if (track < 0 || track >= kTracks || step < 0 || step >= 64) return;
-    cond[track][step] = 0; micro[track][step] = 0; retrig[track][step] = 0; retrigFade[track][step] = 0;
+    cond[track][step] = 0; micro[track][step] = 0; retrig[track][step] = 0; retrigFade[track][step] = 0; soundLock[track][step] = 0;
 }
 
 namespace {
@@ -299,6 +306,7 @@ void Pattern::copySteps(const Pattern& src, int from, int to, int count, int tra
             }
             cond[dt][d] = src.cond[t][s]; micro[dt][d] = src.micro[t][s]; retrig[dt][d] = src.retrig[t][s];
             retrigFade[dt][d] = src.retrigFade[t][s];
+            soundLock[dt][d] = src.soundLock[t][s];
             setBit(lockTrigs[dt], d, getBit(src.lockTrigs[t], s));
         }
     }
@@ -542,28 +550,30 @@ bool isPatternExtras(const uint8_t* m, size_t n)
 
 // Entries after the head: version 1, five bytes (track, step, condition, micro + 64, retrig; track 0x40 | t: its
 // length); version 2, seven (the same then fade + 64 and flags, bit 0 a trigless lock; 0x40 | t: length, speed;
+// version 3, eight: version 2's then the sound lock (0 none, else pool slot + 1), written only with a sound lock;
 // 0x60 | t: the generators' pulses 1 and 2, rotations 1 and 2, op). Version 1 is written while only its fields are
 // used, so plugins before 1.4 still read the extras of such patterns.
 std::vector<uint8_t> encodePatternExtras(const Pattern& p)
 {
     std::vector<uint8_t> out;
-    const bool v2 = p.hasNewExtras();
-    const std::vector<uint8_t> head = {0xF0, 0x7D, 'M', 'N', 'X', uint8_t(v2 ? 2 : 1), uint8_t(p.position & 0x7F)};
+    const bool v3 = p.hasSoundLocks(), v2 = v3 || p.hasNewExtras();
+    const std::vector<uint8_t> head = {0xF0, 0x7D, 'M', 'N', 'X', uint8_t(v3 ? 3 : v2 ? 2 : 1), uint8_t(p.position & 0x7F)};
     auto put = [&](std::initializer_list<uint8_t> e) {
         if (out.empty()) out = head;
-        out.insert(out.end(), e.begin(), e.begin() + (v2 ? 7 : 5));
+        out.insert(out.end(), e.begin(), e.begin() + (v3 ? 8 : v2 ? 7 : 5));
     };
     for (int t = 0; t < kTracks; ++t)
-        if (p.trackLen[t] || p.trackSpeed[t]) put({uint8_t(0x40 | t), uint8_t(p.trackLen[t] & 0x7F), uint8_t(p.trackSpeed[t] % kTrackSpeeds), 64, 0, 64, 0});
+        if (p.trackLen[t] || p.trackSpeed[t]) put({uint8_t(0x40 | t), uint8_t(p.trackLen[t] & 0x7F), uint8_t(p.trackSpeed[t] % kTrackSpeeds), 64, 0, 64, 0, 0});
     for (int t = 0; t < kTracks; ++t)
         if (const auto& e = p.euclid[t]; e.pulses1)
-            put({uint8_t(0x60 | t), uint8_t(e.pulses1 & 0x7F), uint8_t(e.pulses2 & 0x7F), uint8_t(e.rot1 & 0x3F), uint8_t(e.rot2 & 0x3F), uint8_t(e.op & 3), 0});
+            put({uint8_t(0x60 | t), uint8_t(e.pulses1 & 0x7F), uint8_t(e.pulses2 & 0x7F), uint8_t(e.rot1 & 0x3F), uint8_t(e.rot2 & 0x3F), uint8_t(e.op & 3), 0, 0});
     for (int t = 0; t < kTracks; ++t)
         for (int s = 0; s < 64; ++s) {
             const bool lockTrig = (p.lockTrigs[t] >> s) & 1;
-            if (p.cond[t][s] || p.micro[t][s] || p.retrig[t][s] || p.retrigFade[t][s] || lockTrig) {
+            if (p.cond[t][s] || p.micro[t][s] || p.retrig[t][s] || p.retrigFade[t][s] || lockTrig || p.soundLock[t][s]) {
                 const int m = std::clamp(int(p.micro[t][s]), -23, 23) + 64, f = std::clamp(int(p.retrigFade[t][s]), -63, 63) + 64;
-                put({uint8_t(t), uint8_t(s), uint8_t(p.cond[t][s] & 0x7F), uint8_t(m), uint8_t(p.retrig[t][s] & 0x7F), uint8_t(f), uint8_t(lockTrig ? 1 : 0)});
+                put({uint8_t(t), uint8_t(s), uint8_t(p.cond[t][s] & 0x7F), uint8_t(m), uint8_t(p.retrig[t][s] & 0x7F), uint8_t(f), uint8_t(lockTrig ? 1 : 0),
+                     uint8_t(std::min<int>(p.soundLock[t][s], kPoolSlots))});
             }
         }
     if (!out.empty()) out.push_back(0xF7);
@@ -572,8 +582,8 @@ std::vector<uint8_t> encodePatternExtras(const Pattern& p)
 
 bool decodePatternExtras(const uint8_t* m, size_t n, int& position, Pattern& p)
 {
-    if (!isPatternExtras(m, n) || (m[5] != 1 && m[5] != 2)) return false;
-    const size_t w = m[5] == 2 ? 7 : 5;
+    if (!isPatternExtras(m, n) || m[5] < 1 || m[5] > 3) return false;
+    const size_t w = m[5] == 3 ? 8 : m[5] == 2 ? 7 : 5;
     if ((n - 8) % w != 0) return false;
     position = m[6];
     for (int t = 0; t < kTracks; ++t) for (int s = 0; s < 64; ++s) p.clearStepExtras(t, s);
@@ -585,21 +595,22 @@ bool decodePatternExtras(const uint8_t* m, size_t n, int& position, Pattern& p)
         const int t = m[i], s = m[i + 1];
         if (t >= 0x40 && t < 0x40 + kTracks) {
             p.trackLen[t - 0x40] = uint8_t(s <= 64 ? s : 0);
-            if (w == 7) p.trackSpeed[t - 0x40] = uint8_t(m[i + 2] < kTrackSpeeds ? m[i + 2] : 0);
+            if (w >= 7) p.trackSpeed[t - 0x40] = uint8_t(m[i + 2] < kTrackSpeeds ? m[i + 2] : 0);
             continue;
         }
         if (t >= 0x60 && t < 0x60 + kTracks) {
-            if (w == 7) p.euclid[t - 0x60] = {uint8_t(std::min<int>(16, m[i + 1])), uint8_t(std::min<int>(16, m[i + 2])), uint8_t(m[i + 3] & 0x3F), uint8_t(m[i + 4] & 0x3F), uint8_t(m[i + 5] & 3)};
+            if (w >= 7) p.euclid[t - 0x60] = {uint8_t(std::min<int>(16, m[i + 1])), uint8_t(std::min<int>(16, m[i + 2])), uint8_t(m[i + 3] & 0x3F), uint8_t(m[i + 4] & 0x3F), uint8_t(m[i + 5] & 3)};
             continue;
         }
         if (t >= kTracks || s >= 64) continue;
         p.cond[t][s] = m[i + 2] < kConditions ? m[i + 2] : 0;
         p.micro[t][s] = int8_t(std::clamp(int(m[i + 3]) - 64, -23, 23));
         p.retrig[t][s] = uint8_t(m[i + 4] & 0x3F);
-        if (w == 7) {
+        if (w >= 7) {
             p.retrigFade[t][s] = int8_t(std::clamp(int(m[i + 5]) - 64, -63, 63));
             if ((m[i + 6] & 1) && !((p.trigs[t] >> s) & 1)) p.lockTrigs[t] |= 1ull << s;
         }
+        if (w == 8) p.soundLock[t][s] = uint8_t(m[i + 7] <= kPoolSlots ? m[i + 7] : 0);
     }
     return true;
 }
@@ -642,6 +653,12 @@ Dump parseDump(const uint8_t* data, size_t size, const std::string& filename)
             }
         } else if (isPatternExtras(r, n)) {
             m.extras = true;   // put on its pattern below (it comes after it)
+        } else if (SceneData sc; decodeScene(r, n, sc)) {
+            m.setData = true;
+            d.scenes.push_back(std::move(sc));
+        } else if (PoolSound ps; decodePoolSound(r, n, ps)) {
+            m.setData = true;
+            d.pool.push_back(std::move(ps));
         } else {
             ++d.numUnknown;
         }
@@ -661,6 +678,7 @@ Dump parseDump(const uint8_t* data, size_t size, const std::string& filename)
                 std::memcpy(it->trackLen, probe.trackLen, sizeof(probe.trackLen));
                 std::memcpy(it->retrigFade, probe.retrigFade, sizeof(probe.retrigFade));
                 std::memcpy(it->trackSpeed, probe.trackSpeed, sizeof(probe.trackSpeed));
+                std::memcpy(it->soundLock, probe.soundLock, sizeof(probe.soundLock));
                 for (int t = 0; t < kTracks; ++t) { it->lockTrigs[t] = probe.lockTrigs[t] & ~it->trigs[t]; it->euclid[t] = probe.euclid[t]; }
                 break;
             }
@@ -673,7 +691,7 @@ std::vector<uint8_t> encodeDump(const Dump& d, bool withExtras)
     std::vector<uint8_t> out;
     for (const auto& m : d.messages) {
         std::vector<uint8_t> bytes;
-        if (m.extras) continue;   // written again after its pattern (from the pattern, so edits take effect)
+        if (m.extras || m.setData) continue;   // written again from the structs (so edits take effect)
         if (m.kitIndex >= 0) bytes = encodeKit(d.kits[size_t(m.kitIndex)]);
         else if (m.patternIndex >= 0) {
             bytes = encodePattern(d.patterns[size_t(m.patternIndex)]);
@@ -683,7 +701,67 @@ std::vector<uint8_t> encodeDump(const Dump& d, bool withExtras)
         else bytes = m.raw;
         out.insert(out.end(), bytes.begin(), bytes.end());
     }
+    if (withExtras) {   // the set data last
+        for (const auto& s : d.scenes) { const auto b = encodeScene(s); out.insert(out.end(), b.begin(), b.end()); }
+        for (const auto& s : d.pool) { const auto b = encodePoolSound(s); out.insert(out.end(), b.begin(), b.end()); }
+    }
     return out;
+}
+
+static bool isSetMessage(const uint8_t* m, size_t n, uint8_t kind)
+{
+    return n >= 8 && m[0] == 0xF0 && m[1] == 0x7D && m[2] == 'M' && m[3] == 'N' && m[4] == kind && m[5] == 1 && m[n - 1] == 0xF7;
+}
+
+std::vector<uint8_t> encodeScene(const SceneData& s)
+{
+    std::vector<uint8_t> out = {0xF0, 0x7D, 'M', 'N', 'S', 1, uint8_t(s.index & 15)};
+    for (const auto& [slot, v] : s.locks) {
+        if (slot >= kSetSceneSlots) continue;
+        out.push_back(uint8_t(slot >> 7)); out.push_back(uint8_t(slot & 0x7F)); out.push_back(uint8_t(v & 0x7F));
+    }
+    out.push_back(0xF7);
+    return out;
+}
+
+bool decodeScene(const uint8_t* m, size_t n, SceneData& s)
+{
+    if (!isSetMessage(m, n, 'S') || (n - 8) % 3 != 0) return false;
+    s = {};
+    s.index = m[6] & 15;
+    for (size_t i = 7; i + 3 <= n - 1; i += 3) {
+        const int slot = (m[i] << 7) | m[i + 1];
+        if (slot < kSetSceneSlots) s.locks.push_back({uint16_t(slot), uint8_t(m[i + 2] & 0x7F)});
+    }
+    return true;
+}
+
+// <slot> <16 name characters> <model in 5 x 7 bits> <24 params> <36 LFO bytes as 72 nibbles> <track>
+std::vector<uint8_t> encodePoolSound(const PoolSound& s)
+{
+    std::vector<uint8_t> out = {0xF0, 0x7D, 'M', 'N', 'P', 1, uint8_t(s.slot & 0x7F)};
+    for (int i = 0; i < 16; ++i) out.push_back(uint8_t(i < int(s.name.size()) ? s.name[size_t(i)] & 0x7F : 0));
+    for (int i = 0; i < 5; ++i) out.push_back(uint8_t((s.model >> (7 * i)) & 0x7F));
+    for (auto v : s.params) out.push_back(uint8_t(v & 0x7F));
+    for (auto v : s.lfo) { out.push_back(uint8_t(v >> 4)); out.push_back(uint8_t(v & 15)); }
+    out.push_back(uint8_t(s.track & 15));
+    out.push_back(0xF7);
+    return out;
+}
+
+bool decodePoolSound(const uint8_t* m, size_t n, PoolSound& s)
+{
+    if (!isSetMessage(m, n, 'P') || n != 7 + 16 + 5 + 24 + 72 + 1 + 1) return false;
+    s = {};
+    s.slot = m[6];
+    if (s.slot >= kPoolSlots) return false;
+    size_t i = 7;
+    for (int k = 0; k < 16; ++k, ++i) if (m[i]) s.name.push_back(char(m[i]));
+    for (int k = 0; k < 5; ++k, ++i) s.model |= uint32_t(m[i]) << (7 * k);
+    for (auto& v : s.params) v = m[i++];
+    for (auto& v : s.lfo) { v = uint8_t((m[i] << 4) | (m[i + 1] & 15)); i += 2; }
+    s.track = m[i] & 15;
+    return true;
 }
 
 } // namespace mnm::mddump

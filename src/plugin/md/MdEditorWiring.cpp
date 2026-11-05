@@ -11,12 +11,14 @@ void setStepExtra(mnm::mddump::Pattern& x, int t, int s, int kind, int v)
 {
     if (kind == 0) x.cond[t][s] = uint8_t(v);
     else if (kind == 1) x.micro[t][s] = int8_t(v);
-    else x.retrig[t][s] = uint8_t(v);
+    else if (kind == 2) x.retrig[t][s] = uint8_t(v);
+    else x.soundLock[t][s] = uint8_t(v);
 }
 juce::String extraText(int kind, int v)
 {
     if (kind == 0) return v ? juce::String(mnm::mddump::conditionName(v)) : juce::String("NO COND");   // (the box fits ~8)
     if (kind == 1) return juce::String(v > 0 ? "+" : "") + juce::String(v) + "/24";
+    if (kind == 3) return v ? "POOL " + juce::String(v) : juce::String("OWN SND");
     return v ? juce::String(mnm::mddump::retrigName(uint8_t(v))) : juce::String("NO RTRG");
 }
 }
@@ -153,7 +155,7 @@ void MdEditor::wireKeys()
         const int t = m_track;
         const auto p = m_proc.bankPattern(editSlot());
         if (!p || !((p->trigs[t] >> s) & 1)) { if (first) flash("NO TRIG"); return; }   // extras belong to a trig
-        static const char* const names[3] = {"condition", "micro-timing", "retrig"};
+        static const char* const names[4] = {"condition", "micro-timing", "retrig", "sound lock"};
         const int v = on ? m_lastExtra[size_t(kind)] : 0;
         const uint64_t steps = heldTargets(s) & p->trigs[t];   // a held step: every held step (with a trig)
         doEdit(editSlot(), names[kind], [&](mnm::mddump::Pattern& x) { for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) setStepExtra(x, t, q, kind, v); }, 20000 + (m_paintStroke & 0xFFFF));
@@ -164,16 +166,17 @@ void MdEditor::wireKeys()
         const auto p = m_proc.bankPattern(editSlot());
         if (!p || !((p->trigs[t] >> s) & 1)) { flash("NO TRIG"); return; }
         namespace dd = mnm::mddump;
-        int v = kind == 0 ? p->cond[t][s] : kind == 1 ? p->micro[t][s] : p->retrig[t][s];
-        if (kind == 0) v = v == 0 ? m_lastExtra[0] : juce::jlimit(0, dd::kConditions - 1, v + delta);
+        int v = kind == 0 ? p->cond[t][s] : kind == 1 ? p->micro[t][s] : kind == 2 ? p->retrig[t][s] : p->soundLock[t][s];
+        if (kind == 3) v = v == 0 ? m_lastExtra[3] : juce::jlimit(1, dd::kPoolSlots, v + delta);
+        else if (kind == 0) v = v == 0 ? m_lastExtra[0] : juce::jlimit(0, dd::kConditions - 1, v + delta);
         else if (kind == 1) v = juce::jlimit(-23, 23, v + delta);
         else if (v == 0) v = m_lastExtra[2];
         else if (alt) v = dd::makeRetrig(dd::retrigRate(uint8_t(v)), dd::retrigSteps(uint8_t(v)) + delta);   // Shift: its length
         else v = dd::makeRetrig(juce::jlimit(0, 7, dd::retrigRate(uint8_t(v)) + delta), dd::retrigSteps(uint8_t(v)));
         if (v != 0) m_lastExtra[size_t(kind)] = v;   // the next click sets this
-        static const char* const names[3] = {"condition", "micro-timing", "retrig"};
+        static const char* const names[4] = {"condition", "micro-timing", "retrig", "sound lock"};
         doEdit(editSlot(), names[kind], [&](dd::Pattern& x) { const uint64_t steps = heldTargets(s) & x.trigs[t]; for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) setStepExtra(x, t, q, kind, v); }, 40000 + kind * 64 + s);
-        flash(extraText(kind, v));
+        flash(kind == 3 ? poolSay(v) : extraText(kind, v));
         refreshGrid();
     };
     m_keys.onGenClick = [this](int key, bool shift, bool alt) {
@@ -415,6 +418,62 @@ void MdEditor::wireMixer()
 }
 
 // The UW sample manager
+void MdEditor::wirePoolPanel()
+{
+    m_poolPanel.setWantsKeyboardFocus(true);
+    m_poolPanel.setTooltip("The sound pool: sounds a trig can play on its track (GRID with XTRA on: P, then click trigs). "
+                           "STORE: the selected track's sound here. Enter / double-click: rename. Delete: clear. Space / PLAY: hear it");
+    m_poolPanel.name = [this](int i) { const auto p = m_proc.soundPool(); return p->used[size_t(i)] ? juce::String(p->s[size_t(i)].name) : juce::String(); };
+    m_poolPanel.track = [this] { return m_track; };
+    m_poolPanel.onClose = [this] { grabKeyboardFocus(); refreshGrid(); };
+    m_poolPanel.onSelect = [this](int i) { m_lastExtra[3] = i + 1; };   // what a click in the P window locks
+    m_poolPanel.onStore = [this](int i) {
+        const auto snd = m_proc.captureSound(m_track);
+        mnm::mddump::PoolSound ps;
+        ps.slot = i;
+        ps.model = snd.model;
+        std::memcpy(ps.params, snd.params, sizeof(ps.params));
+        std::memcpy(ps.lfo, snd.lfo, sizeof(ps.lfo));
+        ps.track = snd.track;
+        const auto loaded = m_proc.loadedSoundName(m_track);
+        ps.name = (loaded.isNotEmpty() ? loaded : juce::String(kMachines[machineIndexOf(int(snd.model & 0xFF))].name)).toUpperCase().substring(0, 16).toStdString();
+        m_proc.setPoolSound(i, &ps);
+        m_lastExtra[3] = i + 1;
+        flash("T" + juce::String(m_track + 1) + " > POOL " + juce::String(i + 1));
+        m_poolPanel.repaint();
+    };
+    m_poolPanel.onClear = [this](int i) { m_proc.setPoolSound(i, nullptr); m_poolPanel.repaint(); };
+    m_poolPanel.onPlay = [this](int i) {
+        if (!m_proc.soundPool()->used[size_t(i)]) { flash("EMPTY SLOT"); return; }
+        m_proc.auditionPool(m_track, i);
+    };
+    m_poolPanel.onRename = [this](int i) {
+        const auto pool = m_proc.soundPool();
+        if (!pool->used[size_t(i)]) { flash("EMPTY SLOT"); return; }
+        auto* aw = new juce::AlertWindow("Rename pool sound " + juce::String(i + 1), {}, juce::MessageBoxIconType::NoIcon, this);
+        aw->addTextEditor("name", juce::String(pool->s[size_t(i)].name));
+        aw->addButton("RENAME", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        aw->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        aw->enterModalState(true, juce::ModalCallbackFunction::create([this, aw, i](int r) {
+            if (r == 1) {
+                auto ps = m_proc.soundPool()->s[size_t(i)];
+                ps.name = aw->getTextEditorContents("name").toUpperCase().substring(0, 16).toStdString();
+                m_proc.setPoolSound(i, &ps);
+            }
+            m_poolPanel.repaint();
+            m_poolPanel.grabKeyboardFocus();
+        }), true);
+    };
+}
+
+juce::String MdEditor::poolSay(int v) const
+{
+    if (v <= 0) return "OWN SND";
+    const auto p = m_proc.soundPool();
+    const bool used = v <= mnm::mddump::kPoolSlots && p->used[size_t(v - 1)];
+    return "P" + juce::String(v) + " " + (used ? juce::String(p->s[size_t(v - 1)].name).substring(0, 6) : juce::String("EMPTY"));
+}
+
 void MdEditor::wireSamplePanel()
 {
     m_samplePanel.setWantsKeyboardFocus(true);
@@ -471,6 +530,7 @@ void MdEditor::wireMidiPanel()
         v.ptnMode = s.patternNoteMode;
         v.ctrlIn = s.ctrlIn ? 1 : 0;
         v.tempoOut = s.tempoOut ? 1 : 0;
+        v.local = s.local ? 1 : 0;
         v.ctrlOut = s.ctrlOut ? 1 : 0;
         v.inTrack = s.inTrack; v.inGate = s.inGate; v.inSense = s.inSense; v.inMin = s.inMin; v.inMax = s.inMax;
         for (int n = 0; n < 128; ++n) {
@@ -503,6 +563,7 @@ void MdEditor::wireMidiPanel()
         s.patternNoteMode = v.ptnMode;
         s.ctrlIn = v.ctrlIn != 0;
         s.tempoOut = v.tempoOut != 0;
+        s.local = v.local != 0;
         s.ctrlOut = v.ctrlOut != 0;
         s.inTrack = v.inTrack; s.inGate = v.inGate; s.inSense = v.inSense; s.inMin = v.inMin; s.inMax = v.inMax;
         if (v.ptnFrom != -2) {   // CUSTOM (a project's map) stays as it is until FROM is turned
@@ -541,6 +602,8 @@ void MdEditor::wireMidiPanel()
             if (r <= 0 || r > int(globals.size())) return;
             m_proc.setMidiSettings(MdProcessor::fromGlobal(globals[size_t(r - 1)], m_proc.midiSettings()));
             m_proc.applyGlobalRouting(globals[size_t(r - 1)]);   // the track outputs too: a global setting on the MD
+            if (auto* p = m_proc.apvts.getParameter(extendedId()))   // and CLASSIC / EXTENDED
+                p->setValueNotifyingHost(p->convertTo0to1(globals[size_t(r - 1)].extendedMode ? 1.0f : 0.0f));
             m_midiPanel.repaint();
         });
     };

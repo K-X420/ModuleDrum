@@ -214,6 +214,9 @@ inline juce::String extendedId() { return "extmode"; }
 // EXTRAS (the plugin's own, off = a real MD): the patterns' trig conditions, micro-timing and retrigs play, and GRID
 // shows their edit windows (C / T / R)
 inline juce::String extrasId() { return "extras"; }
+// PATTERN CHANGE (as the Digitakt's; the MD's is SEQUENTIAL): when a pattern picked while playing takes over
+inline juce::String ptnChangeId() { return "ptnchange"; }
+enum PatternChange { kChangeSequential = 0, kChangeDirectStart, kChangeDirectJump, kChangeTempJump };
 inline juce::String patternId() { return "pattern"; }
 // MODE SONG plays SONG (its rows: a pattern's steps, repeats, mutes; LOOP and END rows) from the start of the host's
 // timeline; the position in the song follows the host's position.
@@ -284,6 +287,8 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{seqId(), 1}, "SEQ", juce::StringArray{"OFF", "ON"}, 1));   // on: the host's play runs the pattern
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{extendedId(), 1}, "MODE CLASSIC/EXTENDED", juce::StringArray{"CLASSIC", "EXTENDED"}, 1));
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{extrasId(), 1}, "EXTRAS", juce::StringArray{"OFF", "ON"}, 0));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{ptnChangeId(), 1}, "PATTERN CHANGE",
+                                                            juce::StringArray{"SEQUENTIAL", "DIRECT START", "DIRECT JUMP", "TEMP JUMP"}, 0));
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{seqModeId(), 1}, "MODE", juce::StringArray{"PATTERN", "SONG"}, 0));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{songId(), 1}, "SONG", 0, 31, 0, juce::AudioParameterIntAttributes().withStringFromValueFunction([](int v, int) { return juce::String(kSongNames[juce::jlimit(0, 31, v)]); })));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{patternId(), 1}, "PATTERN", 0, 127, 0, juce::AudioParameterIntAttributes().withStringFromValueFunction([](int v, int) { return juce::String(kPatternNames[juce::jlimit(0, 127, v)]); })));

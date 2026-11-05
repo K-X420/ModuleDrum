@@ -93,7 +93,8 @@ MdEditor::MdEditor(MdProcessor& p)
     m_mixer.setWantsKeyboardFocus(true);
     wireMixer();
     addChildComponent(m_samplePanel);
-    wireSamplePanel();
+    addChildComponent(m_poolPanel);
+    wireSamplePanel(); wirePoolPanel();
     addChildComponent(m_midiPanel);
     wireMidiPanel();
     wireSongEditor();
@@ -163,10 +164,15 @@ void MdEditor::bindTrackPage(one::KnobPage& page, const spec::Param* params, std
             [this, t, sc, mdParam, id](int k, int v) {
                 const int p = mdParam(k);
                 if (p < 0) { if (auto* a = m_proc.apvts.getParameter(id(k))) a->setValueNotifyingHost(a->convertTo0to1(float(v))); return; }
-                m_proc.setSceneValue(sc, MdProcessor::sceneSlotOf(t, p), v);
+                const int slot = MdProcessor::sceneSlotOf(t, p);
+                doEditScene(sc, "scene lock", [this, sc, slot, v] { m_proc.setSceneValue(sc, slot, v); }, slot);
                 refreshGrid();
             },
-            [this, t, sc, mdParam](int k) { const int p = mdParam(k); if (p >= 0) m_proc.setSceneValue(sc, MdProcessor::sceneSlotOf(t, p), -1); refreshGrid(); },
+            [this, t, sc, mdParam](int k) {
+                const int p = mdParam(k);
+                if (p >= 0) { const int slot = MdProcessor::sceneSlotOf(t, p); doEditScene(sc, "scene lock off", [this, sc, slot] { m_proc.setSceneValue(sc, slot, -1); }); }
+                refreshGrid();
+            },
             [this, t, sc, mdParam](int k) { const int p = mdParam(k); return p >= 0 && m_proc.sceneValue(sc, MdProcessor::sceneSlotOf(t, p)) >= 0; });
         return;
     }
@@ -237,8 +243,9 @@ void MdEditor::bindOutPage(int tab)
     }();
     static const char* const kSpd[8] = {"1X", "2X", "3/4X", "3/2X", "1/2X", "1/4X", "1/8X", "3X"};   // 4-7: the plugin's extras
     static const char* const kPages[4] = {"1", "2", "3", "4"};
+    static const char* const kChange[4] = {"SEQ", "START", "JUMP", "TEMP"};   // PATTERN CHANGE (GRID: its button, or G)
     const spec::Param params[8] = {readout("LEN", names.lenP.data(), 64, 15), readout("SPD", kSpd, 8), readout("SWNG", names.swingP.data(), 31), numeric("ACC", 64),
-                                   readout("KIT", names.kitP.data(), 64), toggle("GRID", kSeqNames), readout("PAGE", kPages, 4), toggle("XTRA", kSeqNames)};
+                                   readout("KIT", names.kitP.data(), 64), readout("CHNG", kChange, 4), readout("PAGE", kPages, 4), toggle("XTRA", kSeqNames)};
     m_out.bindCustom(params,
         [this](int k) {
             const auto p = m_proc.bankPattern(editSlot());
@@ -248,17 +255,22 @@ void MdEditor::bindOutPage(int tab)
                 case 2: return p ? juce::jlimit(0, 30, p->swingPercent() - 50) : 0;
                 case 3: return p ? int(p->accentAmount) : 64;
                 case 4: return p ? juce::jlimit(0, 63, int(p->kit)) : 0;
-                case 5: return m_gridOn ? 1 : 0;
+                case 5: return juce::jlimit(0, 3, int(std::lround(m_proc.apvts.getRawParameterValue(ptnChangeId())->load())));
                 case 6: return m_gridPage;
                 default: return m_proc.extrasOn() ? 1 : 0;
             }
         },
         [this](int k, int v) {
-            if (k == 5) { m_gridOn = v != 0; if (!m_gridOn) holdStep(-1); refreshGrid(); return; }
+            if (k == 5) {   // PATTERN CHANGE
+                if (auto* a = m_proc.apvts.getParameter(ptnChangeId())) { a->beginChangeGesture(); a->setValueNotifyingHost(a->convertTo0to1(float(v))); a->endChangeGesture(); }
+                static const char* const say[4] = {"SEQUENTIAL", "DIRECT START", "DIRECT JUMP", "TEMP JUMP"};
+                flash(say[juce::jlimit(0, 3, v)]);
+                return;
+            }
             if (k == 6) { m_gridPage = v; refreshGrid(); return; }
             if (k == 7) {   // EXTRAS on / off (off: back to the trigs)
                 if (auto* a = m_proc.apvts.getParameter(extrasId())) { a->beginChangeGesture(); a->setValueNotifyingHost(v ? 1.0f : 0.0f); a->endChangeGesture(); }
-                if (!v && m_markMode >= 4 && m_markMode <= 6) m_markMode = 0;
+                if (!v && ((m_markMode >= 4 && m_markMode <= 6) || m_markMode == 9)) m_markMode = 0;
                 flash(v ? "EXTRAS: C T R" : "EXTRAS OFF");
                 return;
             }
@@ -300,6 +312,13 @@ void MdEditor::toggleMixer()
     m_mixer.setVisible(true);
     m_mixer.toFront(true);
     m_mixer.grabKeyboardFocus();
+}
+
+void MdEditor::openPoolPanel()
+{
+    m_mixer.setVisible(false); m_midiPanel.setVisible(false); m_songEd.setVisible(false); m_samplePanel.setVisible(false);
+    m_poolPanel.setBounds(m_syn.getX(), m_syn.getY(), m_routing.getRight() - m_syn.getX(), m_out.getBottom() - m_syn.getY());
+    m_poolPanel.open();
 }
 
 void MdEditor::openSamplePanel()
@@ -402,7 +421,7 @@ void MdEditor::refreshGrid()
             g.accent = p->accentEditAll ? p->accent : p->accentPerTrack[t];
             g.slide = p->slideEditAll ? p->slide : p->slidePerTrack[t];
             g.swing = p->swingEditAll ? p->swing : p->swingPerTrack[t];
-            for (int s = 0; s < 64; ++s) { g.cond[size_t(s)] = p->cond[t][s]; g.micro[size_t(s)] = p->micro[t][s]; g.retrig[size_t(s)] = p->retrig[t][s]; g.fade[size_t(s)] = p->retrigFade[t][s]; }
+            for (int s = 0; s < 64; ++s) { g.cond[size_t(s)] = p->cond[t][s]; g.micro[size_t(s)] = p->micro[t][s]; g.retrig[size_t(s)] = p->retrig[t][s]; g.fade[size_t(s)] = p->retrigFade[t][s]; g.sound[size_t(s)] = p->soundLock[t][s]; }
             g.lockTrigs = p->lockTrigs[t];
             if (m_markMode == 7) { g.eu1 = m_gen.mode == 1 ? m_gen.n : 0; g.eu2 = m_gen.mode == 1 ? m_gen.n2 : 0; }
             g.trackLen = m_proc.extrasOn() && p->trackLen[t] > 0 && p->trackLen[t] < g.length ? int(p->trackLen[t]) : 0;
@@ -493,8 +512,16 @@ void MdEditor::bindMasterFx(int fx)
     };
     m_master.bindCustom(params.data(),
         [this, sc, fx, paramValue](int k) { const int v = m_proc.sceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k)); return v >= 0 ? v : paramValue(k); },
-        [this, sc, fx](int k, int v) { m_proc.setSceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k), v); refreshGrid(); },
-        [this, sc, fx](int k) { m_proc.setSceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k), -1); refreshGrid(); },
+        [this, sc, fx](int k, int v) {
+            const int slot = MdProcessor::sceneFxSlotOf(fx, k);
+            doEditScene(sc, "scene lock", [this, sc, slot, v] { m_proc.setSceneValue(sc, slot, v); }, slot);
+            refreshGrid();
+        },
+        [this, sc, fx](int k) {
+            const int slot = MdProcessor::sceneFxSlotOf(fx, k);
+            doEditScene(sc, "scene lock off", [this, sc, slot] { m_proc.setSceneValue(sc, slot, -1); });
+            refreshGrid();
+        },
         [this, sc, fx](int k) { return m_proc.sceneValue(sc, MdProcessor::sceneFxSlotOf(fx, k)) >= 0; });
 }
 
@@ -540,8 +567,8 @@ void MdEditor::sceneMenu(int s)
         else if (r == 2) setSide(sceneAId(), s + 1);
         else if (r == 3) setSide(sceneBId(), s + 1);
         else if (r == 4) { m_sceneClip = m_proc.sceneData(s); flash("COPIED SCN " + juce::String(s + 1)); }
-        else if (r == 5) { m_proc.setSceneData(s, m_sceneClip); flash("PASTED"); }
-        else if (r == 6) { m_proc.setSceneData(s, {}); flash("CLEARED"); }
+        else if (r == 5) { doEditScene(s, "paste scene", [this, s] { m_proc.setSceneData(s, m_sceneClip); }); flash("PASTED"); }
+        else if (r == 6) { doEditScene(s, "clear scene", [this, s] { m_proc.setSceneData(s, {}); }); flash("CLEARED"); }
         if (r >= 4) { for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master}) pg->pull(); }
         refreshGrid();
     });
@@ -586,6 +613,7 @@ void MdEditor::showMenu()
     m.addItem(22, "CLEAR T" + juce::String(m_track + 1) + " MACHINE  (CTRL+SHIFT+DEL)");
     m.addItem(11, "MIDI SETTINGS...");
     m.addItem(23, "SAMPLES...");
+    m.addItem(24, "SOUND POOL...");
     m.addSeparator();
     {
         const int sl = juce::jlimit(0, 31, int(std::lround(m_proc.apvts.getRawParameterValue(songId())->load())));
@@ -604,6 +632,7 @@ void MdEditor::showMenu()
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&m_menuButton), [this](int r) {
         if (r == 11) { openMidiPanel(); return; }
         if (r == 23) { openSamplePanel(); return; }
+        if (r == 24) { openPoolPanel(); return; }
         if (r == 16) { toggleMixer(); return; }
         if (r == 18) { undoKit(); return; }
         if (r == 19) { reloadKit(); return; }
@@ -686,7 +715,7 @@ void MdEditor::timerCallback()
     }
     {   // EXTRAS: FILL while F is held (Shift+F latches it); off: no extras windows, no fill
         const bool on = m_proc.extrasOn();
-        if (!on) { m_fillLatch = false; if (m_markMode >= 4 && m_markMode <= 6) m_markMode = 0; }
+        if (!on) { m_fillLatch = false; if ((m_markMode >= 4 && m_markMode <= 6) || m_markMode == 9) m_markMode = 0; }
         const bool held = on && hasKeyboardFocus(true) && juce::KeyPress::isKeyCurrentlyDown('F') && !juce::ModifierKeys::currentModifiers.isAnyModifierKeyDown();
         m_proc.setFill(on && (held || m_fillLatch));
     }

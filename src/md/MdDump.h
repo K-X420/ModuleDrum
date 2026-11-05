@@ -72,6 +72,7 @@ struct Pattern {
     //   retrigFade  the retrig's velocity curve, -63..63: below 0 the hits fade out (-63: to silence), above 0 they
     //               fade in (63: from silence); 0 all at the trig's level
     //   lockTrigs   trigless locks (bit = step): the step's locks are set there without a trig (never with a trig)
+    //   soundLock   a sound lock: 0 none, else the sound pool slot + 1 the trig plays on its track (SetData::pool)
     // Per track: its own length and speed (trackSpeedName), and its Euclidean generators (Euclid, for GENERATE).
     // encodePattern leaves them out; they travel in a message of their own (encodePatternExtras). copySteps and
     // clearSteps take them with the trig; a trig taken off clears its own (clearStepExtras).
@@ -79,6 +80,7 @@ struct Pattern {
     int8_t micro[kTracks][64] = {};
     uint8_t retrig[kTracks][64] = {};
     int8_t retrigFade[kTracks][64] = {};
+    uint8_t soundLock[kTracks][64] = {};
     uint64_t lockTrigs[kTracks] = {};
     uint8_t trackLen[kTracks] = {};     // a track's own length in steps (it loops there); 0 = the pattern's
     uint8_t trackSpeed[kTracks] = {};   // 0 the pattern's speed, else kTrackSpeeds - 1 (2X 3/2X 3/4X 1/2X 1/4X 1/8X of it)
@@ -91,6 +93,7 @@ struct Pattern {
     Euclid euclid[kTracks] = {};
     bool hasExtras() const;
     bool hasNewExtras() const;   // any of the second set (fade, trigless locks, speeds, generators): a version 2 message
+    bool hasSoundLocks() const;  // any sound lock: a version 3 message
     void clearStepExtras(int track, int step);
 };
 
@@ -152,7 +155,7 @@ struct Global {
     // flags (the sync settings): 0x01 TEMPO IN external, 0x10 CTRL IN off (set = off), 0x20 TEMPO OUT, 0x40 CTRL OUT
     uint8_t baseChannel = 0, programChange = 0, trigMode = 0, flags = 0;
     bool ctrlIn() const { return (flags & 0x10) == 0; }
-    // EXTENDED MODE and LOCAL (MIDI local control): kept as read, not applied. The audio inputs' trigger settings per
+    // EXTENDED MODE and LOCAL (MIDI local control): MIDI SETTINGS > FROM PROJECT applies them. The audio inputs' trigger settings per
     // input (A = 0, B = 1): the track each one triggers (16 = none), gate, sensitivity, and the velocities it maps
     // between (min / max); FROM PROJECT applies them. Factory globals: 16 16, 1 1, 0 0, 0 0, 127 127.
     bool extendedMode = false, localOn = true;
@@ -170,7 +173,28 @@ struct Message {
     int kitIndex = -1, patternIndex = -1, songIndex = -1;
     bool damaged = false;                              // a known message that failed its checksum or layout (kept raw only)
     bool extras = false;                               // a pattern's extras (encodeDump writes them after their pattern)
+    bool setData = false;                              // a scene or a pool sound (Dump::scenes / pool)
 };
+
+// The set's own data that a real MD has no room for, kept with a project in the Library: the scenes (the crossfader's
+// locks) and the sound pool (the sounds a sound lock plays). Messages of their own, as the pattern extras.
+constexpr int kSetScenes = 16, kSetSceneSlots = kTracks * 24 + 32, kPoolSlots = 64;
+struct SceneData {
+    int index = 0;                                     // 0..15
+    std::vector<std::pair<uint16_t, uint8_t>> locks;   // (slot, value): t * 24 + p, then kTracks * 24 + fx * 8 + k
+};
+struct PoolSound {
+    int slot = 0;                                      // 0..kPoolSlots - 1
+    std::string name;                                  // up to 16 characters
+    uint32_t model = 0;
+    uint8_t params[24] = {};
+    uint8_t lfo[36] = {};                              // as mdcatalog::Sound (an LFO aimed at its own track: lfo[0] = track)
+    int track = 0;                                     // the track it was taken from
+};
+std::vector<uint8_t> encodeScene(const SceneData& s);          // F0 7D 'M' 'N' 'S' <1> <index> (slot hi, slot lo, value)... F7
+std::vector<uint8_t> encodePoolSound(const PoolSound& s);      // F0 7D 'M' 'N' 'P' <1> <slot> ... F7
+bool decodeScene(const uint8_t* msg, size_t n, SceneData& s);
+bool decodePoolSound(const uint8_t* msg, size_t n, PoolSound& s);
 
 struct Dump {
     std::string file;
@@ -179,6 +203,8 @@ struct Dump {
     std::vector<Pattern> patterns;
     std::vector<Song> songs;
     std::vector<Global> globals;
+    std::vector<SceneData> scenes;                     // the set data (encodeDump writes them last, withExtras only)
+    std::vector<PoolSound> pool;
     int numGlobals = 0, numUnknown = 0, numDamaged = 0;
     const Kit* kitAt(int position) const { for (const auto& k : kits) if (k.position == position) return &k; return nullptr; }
     const Pattern* patternAt(int position) const { for (const auto& p : patterns) if (p.position == position) return &p; return nullptr; }

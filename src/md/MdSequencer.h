@@ -36,6 +36,7 @@ struct SeqTrig {
     bool retrig = false;                   // a retrig's later hit: the voice again, its locks already set
     bool lockOnly = false;                 // a trigless lock: its locks are set, no voice
     double gain = 1.0;                     // the hit's level against the trig's (a retrig's fade)
+    int soundLock = 0;                     // 0 none, else the sound pool slot + 1 it plays (an extra)
 };
 
 // Monomodule's extras as the player plays them (all off by default, as a real MD): trig conditions, micro-timing,

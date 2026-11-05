@@ -29,6 +29,7 @@ juce::Rectangle<int> MdMidiPanel::cellRect(int c) const
     if (c == 25) return {194, kMpRowY + 2 * kMpRowH - 2, 54, 12};   // CTRL IN (next to MIDI OUT)
     if (c == 26) return {194, kMpRowY - 2, 62, 12};   // TEMPO OUT, CTRL OUT (next to BASE CHANNEL)
     if (c == 27) return {260, kMpRowY - 2, 58, 12};
+    if (c == 28) return {322, kMpRowY - 2, 50, 12};   // LOCAL
     if (c >= 20) {   // the PATTERN NOTES row, under the note map
         static const int x[5] = {110, 194, 262, 302, 352}, w[5] = {80, 64, 36, 46, 40};
         return {x[c - 20], kMpGridY + 46, w[c - 20], 12};
@@ -39,7 +40,7 @@ juce::Rectangle<int> MdMidiPanel::cellRect(int c) const
 
 int MdMidiPanel::cellAt(juce::Point<int> p) const
 {
-    for (int c = m_page ? 30 : 0; c < (m_page ? 40 : 28); ++c) if (cellRect(c).contains(p)) return c;
+    for (int c = m_page ? 30 : 0; c < (m_page ? 40 : 29); ++c) if (cellRect(c).contains(p)) return c;
     return -1;
 }
 
@@ -57,6 +58,7 @@ int MdMidiPanel::cellValue(const Values& v, int c) const
     if (c == 25) return v.ctrlIn;
     if (c == 26) return v.tempoOut;
     if (c == 27) return v.ctrlOut;
+    if (c == 28) return v.local;
     if (c >= 30 && c < 40) {
         const size_t i = size_t((c - 30) / 5);
         switch ((c - 30) % 5) { case 0: return v.inTrack[i]; case 1: return v.inGate[i]; case 2: return v.inSense[i]; case 3: return v.inMin[i]; default: return v.inMax[i]; }
@@ -86,6 +88,7 @@ void MdMidiPanel::change(int c, int to)
     else if (c == 25) v.ctrlIn = juce::jlimit(0, 1, to);
     else if (c == 26) v.tempoOut = juce::jlimit(0, 1, to);
     else if (c == 27) v.ctrlOut = juce::jlimit(0, 1, to);
+    else if (c == 28) v.local = juce::jlimit(0, 1, to);
     else if (c >= 30 && c < 40) {
         const size_t i = size_t((c - 30) / 5);
         switch ((c - 30) % 5) {
@@ -161,7 +164,7 @@ void MdMidiPanel::paint(juce::Graphics& g)
         cv.text(spec::kFontSmall4x5, labels[c], 6, r.getY() + 3, true);
         frame(cv, r);
         cv.text(spec::kFontBold8, vals[c].toRawUTF8(), r.getX() + 4, r.getY() + 2, true);
-        cv.text(spec::kFontTiny3x5, notes[c], (c == 0 ? cellRect(27).getRight() : c == 1 ? cellRect(19).getRight() : c == 2 ? cellRect(25).getRight() : r.getRight()) + 8, r.getY() + 4, true);
+        cv.text(spec::kFontTiny3x5, notes[c], (c == 0 ? cellRect(28).getRight() : c == 1 ? cellRect(19).getRight() : c == 2 ? cellRect(25).getRight() : r.getRight()) + 8, r.getY() + 4, true);
     }
     {   // PATTERN NOTES: notes that play patterns (the unit's key map), START, STOP
         const int y = cellRect(20).getY();
@@ -186,12 +189,12 @@ void MdMidiPanel::paint(juce::Graphics& g)
         cv.text(spec::kFontTiny3x5, "CTRL IN", r.getX() + 3, r.getY() + 4, true);
         cv.text(spec::kFontBold8, v.ctrlIn ? "ON" : "OFF", r.getX() + 32, r.getY() + 2, true);
     }
-    for (int c = 26; c <= 27; ++c) {   // TEMPO OUT (MIDI clock), CTRL OUT (START / STOP / CONTINUE, song position)
+    for (int c = 26; c <= 28; ++c) {   // TEMPO OUT (MIDI clock), CTRL OUT (START / STOP / CONTINUE, song position), LOCAL
         const auto r = cellRect(c);
         frame(cv, r);
-        const char* label = c == 26 ? "TEMPO OUT" : "CTRL OUT";
+        const char* label = c == 26 ? "TEMPO OUT" : c == 27 ? "CTRL OUT" : "LOCAL";
         cv.text(spec::kFontTiny3x5, label, r.getX() + 3, r.getY() + 4, true);
-        cv.text(spec::kFontBold8, (c == 26 ? v.tempoOut : v.ctrlOut) ? "ON" : "OFF", r.getX() + 6 + LcdCanvas::textWidth(spec::kFontTiny3x5, label), r.getY() + 2, true);
+        cv.text(spec::kFontBold8, (c == 26 ? v.tempoOut : c == 27 ? v.ctrlOut : v.local) ? "ON" : "OFF", r.getX() + 6 + LcdCanvas::textWidth(spec::kFontTiny3x5, label), r.getY() + 2, true);
     }
     {   // PRG CHANGE's channel
         const auto r = cellRect(19);
@@ -227,6 +230,8 @@ juce::String MdMidiPanel::getTooltip()
         case 25: return "CTRL IN: the host's play / stop run the sequencer (OFF: only PLAY does)";
         case 26: return "TEMPO OUT: MIDI clock out, 24 a quarter note, also while stopped";
         case 27: return "CTRL OUT: START / STOP out, and the song position with CONTINUE when playback jumps";
+        case 28: return "LOCAL (as the MD's): OFF, the knobs and track keys only send MIDI (CCs and notes on the base channel); "
+                        "the sound follows what comes in, so a DAW or another unit can play it back";
         case 30: case 35: return "TRACK: the track this input trigs (OFF: none)";
         case 31: case 36: return "GATE: how sharp a jump in level trigs (higher: only louder hits)";
         case 32: case 37: return "SENS: how much a harder hit raises the velocity (0: always VMIN)";
@@ -253,6 +258,7 @@ void MdMidiPanel::mouseDown(const juce::MouseEvent& e)
     if (c == 25) { change(25, get().ctrlIn ? 0 : 1); return; }   // a switch
     if (c == 26) { change(26, get().tempoOut ? 0 : 1); return; }
     if (c == 27) { change(27, get().ctrlOut ? 0 : 1); return; }
+    if (c == 28) { change(28, get().local ? 0 : 1); return; }
     m_drag = c; m_dragY = e.getPosition().y; m_dragV = cellValue(get(), c);
     if (c >= 3 && c <= 18 && m_dragV < 0) m_dragV = 36 + (c - 3);
     if (c == 21 && m_dragV < 0) m_dragV = 64;   // E3, as the factory map
