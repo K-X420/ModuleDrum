@@ -698,6 +698,37 @@ int main(int argc, char** argv)
         std::printf("DROP %s\n", ok ? "OK" : "FAIL");
         return ok ? 0 : 1;
     }
+    if (argc == 3 && juce::String(argv[1]) == "--sixbench") {
+        // --sixbench <os.syx>: Monomodule Six's CPU, as a share of real time: 10 s with nothing playing, 10 s with one
+        // track playing notes, 10 s with all six
+        using namespace mnm::plugin::one;
+        MnmOneProcessor proc(6);
+        proc.setFirmwarePath(juce::String(argv[2]), false);
+        if (!proc.engineReady()) { std::printf("engine not ready: %s\n", proc.statusText().toRawUTF8()); return 1; }
+        proc.enableAllBuses();
+        proc.prepareToPlay(44100.0, 512);
+        juce::AudioBuffer<float> buf(proc.getTotalNumOutputChannels(), 512);
+        auto run = [&](const char* what, int tracks) {
+            const int blocks = 10 * 44100 / 512;
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            for (int b = 0; b < blocks; ++b) {
+                juce::MidiBuffer midi;
+                if (b % 22 == 0)   // a note every quarter second on each playing track, released halfway
+                    for (int t = 0; t < tracks; ++t) midi.addEvent(juce::MidiMessage::noteOn(t + 1, 48 + 7 * t, 1.0f), 0);
+                if (b % 22 == 11)
+                    for (int t = 0; t < tracks; ++t) midi.addEvent(juce::MidiMessage::noteOff(t + 1, 48 + 7 * t), 0);
+                buf.clear();
+                proc.processBlock(buf, midi);
+            }
+            const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            std::printf("%-22s %5.1f%% of real time\n", what, ms / 100.0);
+        };
+        run("warm-up", 6);
+        run("nothing playing", 0);
+        run("one track playing", 1);
+        run("all six playing", 6);
+        return 0;
+    }
     if (argc == 3 && juce::String(argv[1]) == "--sixrender") {
         // --sixrender <os.syx>: headless multitimbral check of Monomodule Six. A note on channel 3 sounds
         // on bus 3 only; a REVERB on track 2 fed from track 1 (NEIBOR) sounds on bus 2 when track 1 plays

@@ -1,7 +1,130 @@
+diff --git a/source/dsp56kEmu/audio.h b/source/dsp56kEmu/audio.h
+index 2f1ef5c1..f0d003cd 100644
+--- a/source/dsp56kEmu/audio.h
++++ b/source/dsp56kEmu/audio.h
+@@ -263,7 +263,7 @@ namespace dsp56k
+ 		auto& getAudioOutputs() { return m_audioOutputs; }
+ 
+ 	public:
+-		static constexpr uint32_t RingBufferSize = 8192 * 4;
++		static constexpr uint32_t RingBufferSize = 256;   // MNM: 8192 * 4 upstream; the plugins never stream audio through ESSI
+ 
+ 	protected:
+ 		void readRXimpl(RxFrame& _values);
+diff --git a/source/dsp56kEmu/dsp.cpp b/source/dsp56kEmu/dsp.cpp
+index db792a8a..22a5e4b8 100644
+--- a/source/dsp56kEmu/dsp.cpp
++++ b/source/dsp56kEmu/dsp.cpp
+@@ -320,7 +320,7 @@ namespace dsp56k
+ 		m_currentOpLen = 1;
+ 
+ 		const TWord currentOp = pcCurrentInstruction;
+-		const auto& opCache = m_opcodeCache[currentOp];
++		const auto& opCache = opcodeCache(currentOp);
+ 
+ 		exec_jump(opCache.op, op);
+ 
+@@ -558,7 +558,7 @@ namespace dsp56k
+ 		--reg.lc.var;
+ 		execOp(op);
+ 
+-		const auto& opCache = m_opcodeCache[pcCurrentInstruction];
++		const auto& opCache = opcodeCache(pcCurrentInstruction);
+ 
+ 		const auto& func = opCache.op;
+ 
+@@ -1004,7 +1004,7 @@ namespace dsp56k
+ 
+ 		const auto res = mem.set(MemArea_P, _offset, _value);
+ 
+-		if (_offset < m_opcodeCache.size() && oldValue != _value)
++		if (_offset < m_opcodeCacheSize && oldValue != _value)
+ 		{
+ 			notifyProgramMemWrite(_offset);
+ 			m_jit.notifyProgramMemWrite(_offset);
+@@ -1029,7 +1029,7 @@ namespace dsp56k
+ 
+ 	void DSP::notifyProgramMemWrite(TWord _offset)
+ 	{
+-		m_opcodeCache[_offset].op = &DSP::op_ResolveCache;
++		resolveOpcodeCache(_offset);
+ 
+ #if DSP56300_DEBUGGER
+ 		if(m_debugger)
+@@ -1275,13 +1275,14 @@ namespace dsp56k
+ 
+ 	void DSP::clearOpcodeCache()
+ 	{
+-		m_opcodeCache.clear();
+-		m_opcodeCache.resize(mem.sizeP(), {&DSP::op_ResolveCache});
++		m_opcodeCachePages.clear();
++		m_opcodeCacheSize = mem.sizeP();
++		m_opcodeCachePages.resize((m_opcodeCacheSize >> OpcodeCachePageBits) + 1);
+ 	}
+ 
+ 	void DSP::clearOpcodeCache(const TWord _address)
+ 	{
+-		m_opcodeCache[_address].op = &DSP::op_ResolveCache;
++		resolveOpcodeCache(_address);
+ 		m_jit.notifyProgramMemWrite(_address);
+ 	}
+ 	
+diff --git a/source/dsp56kEmu/dsp.h b/source/dsp56kEmu/dsp.h
+index 423b6998..67792400 100644
+--- a/source/dsp56kEmu/dsp.h
++++ b/source/dsp56kEmu/dsp.h
+@@ -121,7 +121,28 @@ namespace dsp56k
+ 			TInstructionFunc opAlu;
+ 		};
+ 
+-		std::vector<OpcodeCacheEntry>	m_opcodeCache;
++		// MNM: paged and made on first use (the JIT never reads it); an absent page means every entry resolves
++		static constexpr TWord OpcodeCachePageBits = 12;
++		std::vector<std::unique_ptr<OpcodeCacheEntry[]>>	m_opcodeCachePages;
++		TWord	m_opcodeCacheSize = 0;
++		OpcodeCacheEntry& opcodeCache(const TWord _address)
++		{
++			auto& page = m_opcodeCachePages[_address >> OpcodeCachePageBits];
++			if(!page)
++			{
++				constexpr TWord n = 1u << OpcodeCachePageBits;
++				page.reset(new OpcodeCacheEntry[n]);
++				for(TWord i=0; i<n; ++i)
++					page[i] = {&DSP::op_ResolveCache};
++			}
++			return page[_address & ((1u << OpcodeCachePageBits) - 1)];
++		}
++		void resolveOpcodeCache(const TWord _address)
++		{
++			auto& page = m_opcodeCachePages[_address >> OpcodeCachePageBits];
++			if(page)
++				page[_address & ((1u << OpcodeCachePageBits) - 1)].op = &DSP::op_ResolveCache;
++		}
+ 		
+ 		InstructionCache				cache;
+ 
 diff --git a/source/dsp56kEmu/dsp_ops.inl b/source/dsp56kEmu/dsp_ops.inl
-index 566ff163..7e0debe5 100644
+index 566ff163..904a9bc0 100644
 --- a/source/dsp56kEmu/dsp_ops.inl
 +++ b/source/dsp56kEmu/dsp_ops.inl
+@@ -314,7 +314,7 @@ namespace dsp56k
+ 		{
+ 			const auto backupCCR = ccr();
+ 
+-			const auto& cacheEntry = m_opcodeCache[pcCurrentInstruction];
++			const auto& cacheEntry = opcodeCache(pcCurrentInstruction);
+ 			const auto& instAlu = cacheEntry.opAlu;
+ 
+ 			exec_jump(instAlu, op);
+@@ -326,7 +326,7 @@ namespace dsp56k
+ 	{
+ 		if( checkCondition<Ifcc_U>(op) )
+ 		{
+-			const auto& cacheEntry = m_opcodeCache[pcCurrentInstruction];
++			const auto& cacheEntry = opcodeCache(pcCurrentInstruction);
+ 			const auto& instAlu = cacheEntry.opAlu;
+ 
+ 			exec_jump(instAlu, op);
 @@ -427,7 +427,8 @@ namespace dsp56k
  
  	inline void DSP::op_Pflush(const TWord op)
@@ -12,6 +135,24 @@ index 566ff163..7e0debe5 100644
  	}
  	inline void DSP::op_Pflushun(const TWord op)
  	{
+@@ -545,7 +546,7 @@ namespace dsp56k
+ 	}
+ 	inline void DSP::op_ResolveCache(const TWord op)
+ 	{
+-		auto& cacheEntry = m_opcodeCache[pcCurrentInstruction];
++		auto& cacheEntry = opcodeCache(pcCurrentInstruction);
+ 		cacheEntry.op = &DSP::op_Nop;
+ 
+ 		if( !op )
+@@ -637,7 +638,7 @@ namespace dsp56k
+ 
+ 	inline void DSP::op_Parallel(const TWord op)
+ 	{
+-		const auto& cacheEntry = m_opcodeCache[pcCurrentInstruction];
++		const auto& cacheEntry = opcodeCache(pcCurrentInstruction);
+ 		const auto& instMove = cacheEntry.opMove;
+ 		const auto& instAlu = cacheEntry.opAlu;
+ 
 diff --git a/source/dsp56kEmu/dsp_ops_alu.inl b/source/dsp56kEmu/dsp_ops_alu.inl
 index 386e30f3..266f7f08 100644
 --- a/source/dsp56kEmu/dsp_ops_alu.inl
