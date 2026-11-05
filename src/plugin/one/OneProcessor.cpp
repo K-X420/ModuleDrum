@@ -91,6 +91,7 @@ void MnmOneProcessor::loadEngine()
             v->host().setKeyTracking(keyTracks(tr->lpKeyTrack), keyTracks(tr->hpKeyTrack));
             if (isFxMachine(tr->currentMachine)) { v->host().setRouting(dspInputBits(fxInputOf(*tr))); v->host().noteOn(60); }
             v->warmUp(64);   // every voice runs the same warm-up, so the six frame counters stay in step
+            v->setResting(true);   // a track silent for 2 s stops running its DSP until it is played again
             voices.push_back(std::move(v));
         }
         status = "OS" + juce::String(fwNew->version).trim() + " loaded, "

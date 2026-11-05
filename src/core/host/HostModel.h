@@ -36,19 +36,22 @@ public:
     // Word 37 routing (see Machines.h). The emulated track receives every input through the ADC path
     // (setInputFrames), so the plugin mixes NEIBOR/BUS sources host-side and this only records the
     // hardware's flag bits; setRouting(bits) replaces the input part (bits 3/4/6/7/12-14) wholesale.
-    void setRouting(uint32_t bits) { m_routing = bits; }
-    void setOutBuses(uint32_t mask) { m_outBuses = mask & 7u; }             // OUT BUS AB/CD/EF bits
-    void setKeyTracking(bool lowPass, bool highPass) { m_lpKeyTrack = lowPass; m_hpKeyTrack = highPass; }
+    void setRouting(uint32_t bits) { if (m_routing != bits) { m_routing = bits; ++m_changes; } }
+    void setOutBuses(uint32_t mask) { if (m_outBuses != (mask & 7u)) { m_outBuses = mask & 7u; ++m_changes; } }   // OUT BUS AB/CD/EF bits
+    void setKeyTracking(bool lowPass, bool highPass)
+    {
+        if (m_lpKeyTrack != lowPass || m_hpKeyTrack != highPass) { m_lpKeyTrack = lowPass; m_hpKeyTrack = highPass; ++m_changes; }
+    }
     // Continuous effect (Monomodule FX): the machine is trigged once and then runs for as long as the plugin does, so
     // the knobs that act only on a trig or a note (kTrigOnlyWords) are held where a pass-through FX track keeps them,
     // whatever their kit bytes or an LFO say: the AMP envelope open, no portamento, no filter envelope. The LFO trig
     // modes that wait for later trigs run as TRIG (TrackLfos::setContinuous). Off for the hardware's tracks (One, Six).
-    void setContinuous(bool on) { m_continuous = on; m_lfos.setContinuous(on); }
+    void setContinuous(bool on) { m_continuous = on; m_lfos.setContinuous(on); ++m_changes; }
     uint32_t routingWord() const;                      // word 37 as sent (without the machine-independent one-shots)
     Machine machine() const { return m_machine; }
     void setParam(Page page, int param, int value);   // 0..127
     int  param(Page page, int param) const { return m_raw[int(page) * 8 + param]; }
-    void setLfoParam(int lfo, int k, int value) { m_lfos.setRaw(lfo, k, value); }   // 0..127, LFO pages 4-6
+    void setLfoParam(int lfo, int k, int value) { if (m_lfos.raw(lfo, k) != value) { m_lfos.setRaw(lfo, k, value); ++m_changes; } }   // 0..127, LFO pages 4-6
     int  lfoParam(int lfo, int k) const { return m_lfos.raw(lfo, k); }
     TrackLfos& lfos() { return m_lfos; }
     const TrackLfos& lfos() const { return m_lfos; }
@@ -65,6 +68,10 @@ public:
     // Snaps the slewed words to their targets. Not a hardware behaviour (the unit glides in over ~0.2 s
     // after a kit load); used so a freshly created engine starts from a settled state.
     void settle();
+
+    // Counts every change a voice could hear: a note, a machine, a knob, the level, the routing, the tempo. A resting
+    // voice (MonoVoice::setResting) wakes when it moves. Values set again unchanged do not count.
+    uint32_t changes() const { return m_changes; }
 
     const ParamBlock& nextBlock();                     // call once per 16-frame block
     const ParamBlock& current() const { return m_block; }
@@ -95,6 +102,7 @@ private:
     uint32_t m_routing = 0, m_outBuses = kRouteOutAB;
     bool m_lpKeyTrack = true, m_hpKeyTrack = true;   // the hardware's kit default (KIT > ASSIGN > KEY: LPF/HPF on)
     bool m_continuous = false;
+    uint32_t m_changes = 0;
 };
 
 } // namespace mnm::host

@@ -727,6 +727,8 @@ int main(int argc, char** argv)
         run("nothing playing", 0);
         run("one track playing", 1);
         run("all six playing", 6);
+        run("stopped (tails, rests)", 0);
+        run("stopped, all resting", 0);
         return 0;
     }
     if (argc == 3 && juce::String(argv[1]) == "--sixrender") {

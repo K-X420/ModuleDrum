@@ -29,8 +29,23 @@ public:
     // Back to the state of a freshly constructed voice: the DSP re-initialised (delay lines, envelopes and
     // every other kernel state cleared), a new HostModel, the FIFO empty. Used between offline renders.
     void reset();
+    // RESTING: a voice that has put out exact silence (with silence in, as an effect) for kRestAfter blocks stops
+    // running the DSP and puts out zeros, its host model still ticking (LFOs, slews, the frame count). It wakes on any
+    // host change (a note, a knob, the machine...), on input, and every kProbeEvery blocks runs one block for real to
+    // make sure it is still silent. Off by default (offline renders stay exact); the plugins turn it on.
+    void setResting(bool allowed) { m_restAllowed = allowed; if (!allowed) m_resting = false; m_silent = 0; }
+    bool resting() const { return m_resting; }
+    static constexpr int kRestAfter = 5512;   // 2 s at 44.1 kHz: beyond the delay's longest echo
+    static constexpr int kProbeEvery = 256;   // ~93 ms
+    static constexpr int32_t kQuiet = 64;     // output steps (of 2^23) that still count as silence: -102 dBFS
 
 private:
+    bool restingBlock(bool inputSilent);   // true: this block is skipped (the FIFO holds zeros)
+    void noteBlock(bool inputSilent);      // after a real render: counts the silent blocks
+    bool m_restAllowed = false, m_resting = false;
+    int m_silent = 0, m_probe = 0;
+    uint32_t m_seenChanges = 0;
+    bool m_inSilent = true;                // processFx: the input block about to render was all zero
     host::HostModel m_host;
     std::unique_ptr<dsp::DspEngine> m_engine;
     std::array<int32_t, 32> m_fifo{};

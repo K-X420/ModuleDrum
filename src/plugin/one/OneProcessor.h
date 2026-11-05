@@ -121,6 +121,7 @@ public:
     // tests: the lock the audio thread tries (a firmware load holds it), and a track's held notes
     juce::CriticalSection& devEngineLock() { return m_engineLock; }
     int devHeldNotes(int t) const { return int(m_tracks[size_t(t)]->heldNotes.size()); }
+    bool devResting(int t) const { return m_tracks[size_t(t)]->voice && m_tracks[size_t(t)]->voice->resting(); }
 
     juce::AudioProcessorValueTreeState apvts;
 

@@ -11,9 +11,31 @@ MonoVoice::MonoVoice(const fw::Firmware& fw) : m_engine(std::make_unique<dsp::Ds
 
 void MonoVoice::renderBlock()
 {
+    if (m_restAllowed && restingBlock(m_inSilent)) { m_pos = 0; m_avail = dsp::DspEngine::kBlockFrames; return; }
     const auto& b = m_host.nextBlock();
     if (!m_engine->renderBlock(b.w.data(), m_fifo)) m_fifo.fill(0);
     m_pos = 0; m_avail = dsp::DspEngine::kBlockFrames;
+    if (m_restAllowed) noteBlock(m_inSilent);
+}
+
+// Before a block: wake on a change or on input; while resting, tick the host and skip the DSP (but probe now and then)
+bool MonoVoice::restingBlock(bool inputSilent)
+{
+    const uint32_t ch = m_host.changes();
+    if (ch != m_seenChanges || !inputSilent) { m_seenChanges = ch; m_resting = false; m_silent = 0; return false; }
+    if (!m_resting) return false;
+    if (++m_probe >= kProbeEvery) { m_probe = 0; return false; }   // a real block; noteBlock wakes it if it sounds
+    m_host.nextBlock();
+    m_fifo.fill(0);
+    return true;
+}
+
+void MonoVoice::noteBlock(bool inputSilent)
+{
+    // silent: within kQuiet of zero (a reverb tail can settle a few dozen steps off zero for good, ~-108 dBFS)
+    const bool silent = inputSilent && std::all_of(m_fifo.begin(), m_fifo.end(), [](int32_t v) { return v >= -kQuiet && v <= kQuiet; });
+    if (!silent) { m_silent = 0; m_resting = false; return; }
+    if (!m_resting && ++m_silent >= kRestAfter) { m_resting = true; m_probe = 0; }
 }
 
 void MonoVoice::process(float* left, float* right, int n)
@@ -35,6 +57,7 @@ void MonoVoice::processFx(const float* inL, const float* inR, float* outL, float
         m_in[2 * m_inPos] = toDsp(inL[i]); m_in[2 * m_inPos + 1] = toDsp(inR[i]);
         ++m_inPos;
         if (m_inPos == dsp::DspEngine::kBlockFrames) {   // full input block → render (one block of latency)
+            m_inSilent = std::all_of(m_in.begin(), m_in.end(), [](int32_t v) { return v == 0; });
             m_engine->setInputFrames(m_in.data());
             renderBlock();
             m_inPos = 0;
@@ -52,6 +75,7 @@ void MonoVoice::reset()
     m_host = host::HostModel();
     m_fifo.fill(0); m_in.fill(0);
     m_inPos = 0; m_pos = 0; m_avail = 0;
+    m_resting = false; m_silent = 0; m_probe = 0; m_seenChanges = 0; m_inSilent = true;
 }
 
 void MonoVoice::warmUp(int blocks)

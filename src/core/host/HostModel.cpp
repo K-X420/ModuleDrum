@@ -25,14 +25,16 @@ void HostModel::setMachine(Machine m)
         m_raw[k] = machineDef(m) ? machineDef(m)->defaults[k] : 0;
     }
     forceInit();
+    ++m_changes;
 }
 
 void HostModel::setParam(Page page, int param, int value)
 {
-    m_raw[int(page) * 8 + param] = std::clamp(value, 0, 127);
+    const int v = std::clamp(value, 0, 127);
+    if (m_raw[int(page) * 8 + param] != v) { m_raw[int(page) * 8 + param] = v; ++m_changes; }
 }
 
-void HostModel::setLevel(int v) { m_level = std::clamp(v, 0, 127); }
+void HostModel::setLevel(int v) { v = std::clamp(v, 0, 127); if (m_level != v) { m_level = v; ++m_changes; } }
 
 // Word 37: the kit's routing byte (out buses + input flags), the
 // bus-input select, and the key-tracking bits. Versions up to 0.8.0 put the machine index in the low byte
@@ -48,11 +50,12 @@ void HostModel::setMasterTuneHz(double hz)
     // word 38 straight to the pitch index (2048 units/octave), so the value must reach the
     // DSP sign-extended from 16 bits: 440 Hz → 65535 → -1, 400 Hz → 65255 → -281 = -1.65 semitones.
     const long v = std::clamp(std::lround(65536.0 * hz / 440.0), 0L, 65535L);
-    m_tune = uint32_t(int32_t(int16_t(v))) & 0xFFFFFF;
+    const uint32_t t = uint32_t(int32_t(int16_t(v))) & 0xFFFFFF;
+    if (m_tune != t) { m_tune = t; ++m_changes; }
 }
 
-void HostModel::setBpm(double bpm) { m_tick = uint32_t(std::clamp(std::lround(24.0 * bpm), 720L, 7200L)); }
-void HostModel::setTick(uint32_t tick) { m_tick = std::max(1u, tick); }
+void HostModel::setBpm(double bpm) { setTick(uint32_t(std::clamp(std::lround(24.0 * bpm), 720L, 7200L))); }
+void HostModel::setTick(uint32_t tick) { tick = std::max(1u, tick); if (m_tick != tick) { m_tick = tick; ++m_changes; } }
 
 // The note state is a single byte: a note-off followed by a note-on inside one frame leaves a note-on (the
 // off is moot, the on retrigs), a note-on followed by a note-off leaves a note-off. Versions up to 0.9.0
@@ -64,10 +67,11 @@ void HostModel::noteOn(int note)
     m_pendingNote = 1;
     m_pendingFiltTrig = 1;
     m_lfos.trig();
+    ++m_changes;
 }
 
-void HostModel::noteOff() { m_pendingNote = 2; }
-void HostModel::forceInit() { m_pendingInit = true; }
+void HostModel::noteOff() { m_pendingNote = 2; ++m_changes; }
+void HostModel::forceInit() { m_pendingInit = true; ++m_changes; }
 
 // The kit byte, or on a continuous track the FX track default of a trig-only knob.
 uint32_t HostModel::pageTarget(int w) const

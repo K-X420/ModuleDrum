@@ -650,6 +650,69 @@ int checkMidiLock(const juce::String& fw)
     return ok ? 0 : 1;
 }
 
+// RESTING: a track silent for 2 s stops running its DSP. It must wake at once: a note sounds in the very block it
+// arrives in (as it does awake), a knob turn or input wakes it, and an effect rests only while its input is silent.
+int checkResting(const juce::String& fw)
+{
+    bool ok = true;
+    auto check = [&](const char* what, bool good) { std::printf("  %-64s %s\n", what, good ? "ok" : "FAIL"); ok = ok && good; };
+    {
+        MnmOneProcessor p(Variant::One);
+        p.setFirmwarePath(fw, false);
+        if (!p.engineReady()) { std::printf("engine not ready: %s\n", p.statusText().toRawUTF8()); return 1; }
+        p.prepareToPlay(44100.0, 512);
+        juce::AudioBuffer<float> buf(2, 512);
+        auto block = [&](std::initializer_list<juce::MidiMessage> msgs) {
+            juce::MidiBuffer midi;
+            for (const auto& m : msgs) midi.addEvent(m, 0);
+            buf.clear();
+            p.processBlock(buf, midi);
+            return juce::jmax(buf.getMagnitude(0, 0, 512), buf.getMagnitude(1, 0, 512));
+        };
+        auto idle = [&](int blocks) { for (int i = 0; i < blocks; ++i) block({}); };
+        idle(600);   // 7 s
+        check("One, silent 7 s: resting", p.devResting(0));
+        const float first = block({juce::MidiMessage::noteOn(1, 60, 1.0f)});
+        check("a note wakes it and sounds in the same block", !p.devResting(0) && first > 1e-3f);
+        idle(20);
+        block({juce::MidiMessage::noteOff(1, 60)});
+        idle(600);
+        check("released and silent again: resting again", p.devResting(0));
+        if (auto* q = p.apvts.getParameter(levelId(0))) q->setValueNotifyingHost(q->convertTo0to1(90.0f));
+        block({});
+        check("a knob turn wakes it", !p.devResting(0));
+    }
+    {
+        MnmOneProcessor p(Variant::Fx);
+        p.setFirmwarePath(fw, false);
+        p.enableAllBuses();
+        p.prepareToPlay(44100.0, 512);
+        juce::AudioBuffer<float> buf(2, 512);
+        double phase = 0.0;
+        auto block = [&](bool tone) {
+            buf.clear();
+            if (tone)
+                for (int i = 0; i < 512; ++i) {
+                    const float v = 0.3f * float(std::sin(phase));
+                    buf.setSample(0, i, v); buf.setSample(1, i, v);
+                    phase += 2.0 * juce::MathConstants<double>::pi * 440.0 / 44100.0;
+                }
+            juce::MidiBuffer midi;
+            p.processBlock(buf, midi);
+            return juce::jmax(buf.getMagnitude(0, 0, 512), buf.getMagnitude(1, 0, 512));
+        };
+        for (int i = 0; i < 100; ++i) block(true);
+        check("FX with input: never rests", !p.devResting(0));
+        for (int i = 0; i < 2000; ++i) block(false);   // the default REVERB's tail, then 2 s of silence
+        check("FX, input silent (tail gone): resting", p.devResting(0));
+        block(true);
+        const float out = block(true);
+        check("input wakes it and passes", !p.devResting(0) && out > 1e-3f);
+    }
+    std::printf(ok ? "OK\n" : "FAILED\n");
+    return ok ? 0 : 1;
+}
+
 int checkFxContinuous(const juce::String& fw)
 {
     // Issue #2: Monomodule FX is trigged once, so a knob that needs a trig must not close it. With every such knob set as
@@ -892,7 +955,7 @@ int main(int argc, char** argv)
         const juce::String a(argv[i]);
         auto value = [&]() -> juce::String { return i + 1 < argc ? juce::String(argv[++i]) : juce::String(); };
         auto list = [&]() { juce::StringArray l; l.addTokens(value(), ",", ""); l.trim(); l.removeEmptyStrings(); return l; };
-        if (a == "--list" || a == "--fx-response" || a == "--check-fx-flat" || a == "--check-fx-continuous" || a == "--check-preview" || a == "--check-latency" || a == "--check-midi-lock") mode = a;
+        if (a == "--list" || a == "--fx-response" || a == "--check-fx-flat" || a == "--check-fx-continuous" || a == "--check-preview" || a == "--check-latency" || a == "--check-midi-lock" || a == "--check-resting") mode = a;
         else if (a == "--out") { mode = a; outDir = value(); }
         else if (a == "--fw") fw = value();
         else if (a == "--rates") rates = list();
@@ -915,13 +978,14 @@ int main(int argc, char** argv)
                                 ? juce::File::getCurrentWorkingDirectory().getChildFile(fw).getFullPathName() : juce::String());
     if (fw.isEmpty() || !juce::File::getCurrentWorkingDirectory().getChildFile(fw).existsAsFile()) {
         std::printf("no Monomachine OS file (pass --fw, set MNM_OS or -DMNM_OS_SYX=...): skipped\n");
-        return mode == "--check-fx-flat" || mode == "--check-fx-continuous" || mode == "--check-midi-lock" ? kSkipped : 2;
+        return mode == "--check-fx-flat" || mode == "--check-fx-continuous" || mode == "--check-midi-lock" || mode == "--check-resting" ? kSkipped : 2;
     }
     fw = juce::File::getCurrentWorkingDirectory().getChildFile(fw).getFullPathName();
     if (mode == "--fx-response") return fxResponse(fw, machines, csv);
     if (mode == "--check-fx-flat") return checkFxFlat(fw);
     if (mode == "--check-fx-continuous") return checkFxContinuous(fw);
     if (mode == "--check-midi-lock") return checkMidiLock(fw);
+    if (mode == "--check-resting") return checkResting(fw);
 
     std::vector<double> rateList;
     for (const auto& r : rates) if (r.getDoubleValue() >= 8000.0) rateList.push_back(r.getDoubleValue()); else { usage(); return 2; }

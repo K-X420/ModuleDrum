@@ -155,6 +155,9 @@ if(MNM_BUILD_TESTS)
   # a note-off the audio thread receives while the engine is locked waits for the next block (upstream issue #8)
   add_test(NAME midi-lock COMMAND MnmCapture --check-midi-lock)
   set_tests_properties(midi-lock PROPERTIES SKIP_RETURN_CODE 77)
+  # a silent track rests (no DSP) and wakes at once on a note, a knob or input
+  add_test(NAME resting COMMAND MnmCapture --check-resting)
+  set_tests_properties(resting PROPERTIES SKIP_RETURN_CODE 77)
   # Library previews through the sample-rate converter (no OS file needed), and the reported latency against what
   # bypass and (with the OS file) THRU really do
   add_test(NAME preview-resampling COMMAND MnmCapture --check-preview)
