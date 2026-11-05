@@ -19,7 +19,7 @@ else()
     GIT_REPOSITORY https://github.com/dsp56300/dsp56300.git
     GIT_TAG        ${MNM_DSP56300_COMMIT}
     GIT_SUBMODULES source/asmjit
-    PATCH_COMMAND  ${CMAKE_COMMAND} -DPATCH=${_dsp_patch} -DPATCH_HASH=${_dsp_patch_hash} -P ${CMAKE_SOURCE_DIR}/cmake/apply_patch.cmake
+    PATCH_COMMAND  ${CMAKE_COMMAND} -DPATCH=${_dsp_patch} -DPATCH_HASH=${_dsp_patch_hash} -DRESET=source -P ${CMAKE_SOURCE_DIR}/cmake/apply_patch.cmake
     SOURCE_SUBDIR  _no_top_level_project)   # populate only; the libraries are added below
   FetchContent_MakeAvailable(dsp56300)
   set(_dsp_src "${dsp56300_SOURCE_DIR}")
