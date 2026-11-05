@@ -1,8 +1,13 @@
 include(FetchContent)
+# Patched: the VST3 wrapper reports each MIDI CC parameter back to the host, so a repeated CC value arrives
+# (ext/patches/0001-juce-vst3-cc-repeat.patch, issue #6). The patch hash in the command re-patches on a change.
+set(_juce_patch "${CMAKE_SOURCE_DIR}/ext/patches/0001-juce-vst3-cc-repeat.patch")
+file(SHA256 "${_juce_patch}" _juce_patch_hash)
 FetchContent_Declare(JUCE
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
   GIT_TAG 8.0.9
-  GIT_SHALLOW TRUE)
+  GIT_SHALLOW TRUE
+  PATCH_COMMAND ${CMAKE_COMMAND} -DPATCH=${_juce_patch} -DPATCH_HASH=${_juce_patch_hash} -DRESET=modules -P ${CMAKE_SOURCE_DIR}/cmake/apply_patch.cmake)
 FetchContent_MakeAvailable(JUCE)
 
 # Copy each built plugin into the user's plugin folders (macOS ~/Library/Audio/Plug-Ins, Linux ~/.vst3). Off by
@@ -162,4 +167,15 @@ if(MNM_BUILD_TESTS)
   # bypass and (with the OS file) THRU really do
   add_test(NAME preview-resampling COMMAND MnmCapture --check-preview)
   add_test(NAME reported-latency COMMAND MnmCapture --check-latency)
+  # Issue #6: the built Monomodule One .vst3 loaded as a host would, a repeated MIDI CC must get through (the JUCE
+  # patch). Windows only: the loader is LoadLibrary.
+  if(WIN32)
+    set(_vst3_sdk "${juce_SOURCE_DIR}/modules/juce_audio_processors/format_types/VST3_SDK")
+    add_executable(test-vst3-cc-repeat ${CMAKE_SOURCE_DIR}/tests/test_vst3_cc_repeat.cpp
+      ${_vst3_sdk}/pluginterfaces/base/funknown.cpp)
+    target_include_directories(test-vst3-cc-repeat PRIVATE ${_vst3_sdk})
+    target_compile_features(test-vst3-cc-repeat PRIVATE cxx_std_17)
+    add_dependencies(test-vst3-cc-repeat MnmOne_VST3)
+    add_test(NAME vst3-cc-repeat COMMAND test-vst3-cc-repeat $<TARGET_FILE:MnmOne_VST3>)
+  endif()
 endif()

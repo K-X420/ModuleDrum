@@ -1,0 +1,62 @@
+diff --git a/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp b/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp
+index efb9c1589..1cf1403be 100644
+--- a/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp
++++ b/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp
+@@ -3596,7 +3596,7 @@ public:
+     }
+ 
+     //==============================================================================
+-    void processParameterChanges (Vst::IParameterChanges& paramChanges)
++    void processParameterChanges (Vst::IParameterChanges& paramChanges, Vst::IParameterChanges* outputChanges)
+     {
+         jassert (pluginInstance != nullptr);
+ 
+@@ -3631,6 +3631,10 @@ public:
+                         if (const auto change = getPointFromQueue (paramQueue, point))
+                             addParameterChangeToMidiBuffer (change->offsetSamples, vstParamID, change->value);
+                     }
++
++                    if (outputChanges != nullptr)
++                        if (const auto change = getPointFromQueue (paramQueue, numPoints - 1))
++                            reportMidiControllerParamReset (*outputChanges, vstParamID, change->offsetSamples, change->value);
+                 }
+                 else
+                #endif
+@@ -3643,6 +3647,28 @@ public:
+         }
+     }
+ 
++    // Hosts send a MIDI CC as a change of its hidden parameter, and only when that value changes, so the same CC
++    // value twice in a row never arrives (shnolk/monomodule issue #6). After each CC, report the hidden parameter
++    // back at a value no CC maps to (hosts send cc/127, some cc/128): the next CC, even a repeat, is then a change.
++    // The value is a quarter step off cc/127 towards the middle, so it still converts to the same CC if a host
++    // ever fed it back. Pitch bend is left alone (14 bit, and a repeated bend changes nothing).
++    void reportMidiControllerParamReset (Vst::IParameterChanges& outputChanges, const Vst::ParamID id,
++                                         const Steinberg::int32 offsetSamples, const double value)
++    {
++        int channel, ctrlNumber;
++
++        if (! juceVST3EditController->getMidiControllerForParameter (id, channel, ctrlNumber) || ctrlNumber == Vst::kPitchBend)
++            return;
++
++        const auto cc = jlimit (0, 127, (int) (value * 128.0));   // as addParameterChangeToMidiBuffer
++        const auto resetValue = (cc < 64 ? cc + 0.25 : cc - 0.25) / 127.0;
++
++        Steinberg::int32 queueIndex = 0, pointIndex = 0;
++
++        if (auto* queue = outputChanges.addParameterData (id, queueIndex))
++            queue->addPoint (offsetSamples, resetValue, pointIndex);
++    }
++
+     void addParameterChangeToMidiBuffer (const Steinberg::int32 offsetSamples, const Vst::ParamID id, const double value)
+     {
+         // If the parameter is mapped to a MIDI CC message then insert it into the midiBuffer.
+@@ -3691,7 +3717,7 @@ public:
+         midiBuffer.clear();
+ 
+         if (data.inputParameterChanges != nullptr)
+-            processParameterChanges (*data.inputParameterChanges);
++            processParameterChanges (*data.inputParameterChanges, data.outputParameterChanges);
+ 
+        #if JucePlugin_WantsMidiInput
+         if (isMidiInputBusEnabled && data.inputEvents != nullptr)
