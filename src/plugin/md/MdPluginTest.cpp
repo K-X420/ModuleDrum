@@ -444,6 +444,14 @@ int main(int argc, char** argv)
                 if (std::strcmp(sc, "hold") == 0) med->devHoldScene(2);
                 med->refresh();
             }
+            if (std::getenv("MD_UI_POOL")) {   // dev: the sound pool open, a few sounds in it
+                const char* names[6] = {"BD HARD", "SN ROLL", "RIM VERB", "TOM LOW", "HAT OPEN", "CLAP WIDE"};
+                for (int i = 0; i < 6; ++i) {
+                    mnm::mddump::PoolSound ps; ps.name = names[i]; ps.model = uint32_t(kMachines[size_t(1 + i)].id);
+                    proc.setPoolSound(i == 5 ? 17 : i, &ps);
+                }
+                med->devOpenPool();
+            }
             if (std::getenv("MD_UI_SKIN")) med->showSkinDialog();
             if (const char* tab = std::getenv("MD_UI_PANEL")) med->showLibrary(std::atoi(tab));   // 0 sounds, 1 kits, 2 patterns          // the kit list open under the header
             if (const char* bar = std::getenv("MD_UI_BAR")) {   // dev: the sequencer bar playing, "step,length,row[,flash[,gridPage]]" (1-based; row / gridPage 0 = none)
@@ -466,6 +474,8 @@ int main(int argc, char** argv)
                 const uint8_t retrigs[8] = {uint8_t(3 | 3 << 3), uint8_t(7 | 7 << 3), 1, uint8_t(6 | 1 << 3), 2, 5, uint8_t(4 | 2 << 3), 7};
                 const int8_t fades[8] = {-50, 63, 0, -8, 32, 0, -63, 12};
                 for (int i = 0; i < 8; ++i) { g.cond[size_t(32 + i)] = conds[i]; g.micro[size_t(32 + i)] = micros[i]; g.retrig[size_t(32 + i)] = retrigs[i]; g.fade[size_t(32 + i)] = fades[i]; }
+                const uint8_t sounds[8] = {1, 64, 12, 0, 3, 0, 2, 9};   // (9: SOUND LOCK)
+                for (int i = 0; i < 8; ++i) g.sound[size_t(32 + i)] = sounds[i];
                 for (auto* c : med->getChildren()) if (auto* tk = dynamic_cast<MdTrackKeys*>(c)) tk->setGrid(g);
             }
             if (const char* col = std::getenv("MNM_SNAPSHOT_COLORS")) {   // dev: "INK,PAPER" as RRGGBB: the snapshot in those colours (nothing saved)

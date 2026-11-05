@@ -274,6 +274,7 @@ public:
     MdSongEditor& devSongEditor() { return m_songEd; }
     void devOpenMidi(int page = 0) { openMidiPanel(); m_midiPanel.setPage(page); }
     void devToggleScenes() { toggleScenes(); }
+    void devOpenPool() { openPoolPanel(); m_poolPanel.select(2); }
     void devHoldScene(int s) { holdScene(s); }
     one::KnobPage& devSynPage() { return m_syn; }
     one::KnobPage& devMasterPage() { return m_master; }
