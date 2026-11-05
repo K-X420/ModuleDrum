@@ -57,8 +57,8 @@ From Monomodule (Shnolk's work, built here as well):
 |---|---|---|
 | **Monomodule One** | Instrument (AU, VST3, standalone) | One Monomachine track. Plays all 22 machines: GND, SWAVE, SID, DPRO, FM+, VO-6 and the FX machines. The editor recreates the hardware's LCD pages, with the SYN, AMP, FILT and EFX pages plus three LFOs. FX machines process the side-chain input. |
 | **Monomodule Six** | Instrument (AU, VST3, standalone) | All six tracks in one instance. MIDI channels 1-6 play tracks 1-6. It has six stereo outputs, and each track has its own routing: OUT BUS AB/CD/EF, and for FX machines an input of NEIBOR, INP A/B/AB or BUS AB/CD/EF. |
-| **Monomodule FX** | Effect (AU, VST3) | The FX machines as an audio effect: THRU, REVERB, CHORUS, DYNAMIX, RINGMOD, PHASER and FLANGER. |
-| **Monomodule Library** | Standalone app | A library for Monomachine and Machinedrum sysex dumps. It imports `.syx` files without losing any data, keeps a version history for each machine you own, and lets you browse presets, kits and patterns with audio previews. You can drag items into the plugins or your DAW. |
+| **Monomodule FX** | Effect (AU, VST3) | The FX machines as an audio effect: THRU, REVERB, CHORUS, DYNAMIX, RINGMOD, PHASER and FLANGER. It processes its input continuously, so the controls that only respond to trigs on the hardware are hidden and held open: the AMP envelope (ATK, HOLD, DEC, REL), portamento and the filter envelope. Presets keep their values, and One and Six still use them. |
+| **Monomodule Library** | Standalone app | A library for Monomachine and Machinedrum sysex dumps. It imports `.syx` files without losing any data, keeps a version history for each machine you own, and lets you browse presets, kits and patterns with audio previews. The previews play through the system's audio output and follow it when you switch it; **Audio Output** in the menu selects another device. You can drag items into the plugins or your DAW. |
 
 What this fork adds to the Monomodule plugins:
 
@@ -73,6 +73,10 @@ is the source.
 
 Every parameter is a raw 0-127 value, just like on the hardware, so a track's settings are the same as a kit track
 in a sysex dump. The plugins and the Library app share presets, kits and patterns.
+
+Every window can be resized from 50% to 200% with its proportions kept: drag the grip in a plugin's bottom-right
+corner, or the edges of the Library window. The Monomodule plugins and the Library app share one size setting: a new window
+opens at the size you last chose in any of them, or smaller on a screen it would not fit.
 
 ## Getting the OS files
 

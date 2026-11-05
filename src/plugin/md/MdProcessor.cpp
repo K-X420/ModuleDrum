@@ -1,5 +1,6 @@
 // ModuleDrum's processor: the engine, the audio block, the parameters, previews
 #include "MdProcessorInternal.h"
+#include "LateMidi.h"
 #include <cmath>
 #include "MdEditor.h"
 #include "MdMachineText.h"
@@ -96,6 +97,7 @@ void MdProcessor::setFirmwarePath(const juce::String& path, bool persist)
 void MdProcessor::loadEngine()
 {
     const juce::ScopedLock sl(m_engineLock);
+    const juce::ScopedLock st(m_statusLock);
     m_engineReady = false;
     m_engine.reset(); m_fw.reset();
     if (m_firmwarePath.isEmpty()) { m_status = "Select the Machinedrum OS file (Elektron_SPS1-1UW_OS1.63.syx)"; return; }
@@ -130,6 +132,8 @@ void MdProcessor::loadEngine()
 void MdProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     m_hostRate = sampleRate;
+    m_lateMidi.clear();
+    m_lateMidi.ensureSize(size_t(kMaxLateMidi) * 8);
     const int cap = int(std::ceil(samplesPerBlock * kEngineRate / sampleRate)) + 2 * kBlock + 16;
     for (auto& f : m_fifo) f.assign(size_t(cap), 0.0f);
     m_fifoLen = 0;
@@ -307,7 +311,7 @@ double MdProcessor::tempo() const
 
 juce::String MdProcessor::statusText() const
 {
-    const juce::ScopedLock sl(m_engineLock);
+    const juce::ScopedLock sl(m_statusLock);   // not the engine lock: a status refresh must never stall the audio thread
     juce::String s = m_status;
     if (m_engine) {
         if (m_engine->voices().faulted()) s += " | DSP2 (voices) FAULT: " + juce::String(m_engine->voices().faultReason());
@@ -446,7 +450,9 @@ void MdProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffe
         m_intWas = false;
     }
     const juce::ScopedTryLock sl(m_engineLock);
-    if (!sl.isLocked() || !m_engineReady) { midi.clear(); mixPreview(buffer); return; }
+    if (!sl.isLocked()) { keepLateMidi(m_lateMidi, midi, kMaxLateMidi); midi.clear(); mixPreview(buffer); return; }
+    if (!m_engineReady) { m_lateMidi.clear(); midi.clear(); mixPreview(buffer); return; }
+    takeLateMidi(m_lateMidi, midi);
     const double ratio = kEngineRate / m_hostRate;   // engine frames per host frame
     {   // PER TRACK: the tracks whose own bus is live leave the hardware outputs
         uint32_t mask = 0;

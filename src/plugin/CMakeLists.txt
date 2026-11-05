@@ -148,6 +148,13 @@ if(MNM_BUILD_TESTS)
   # OS file (MNM_OS or -DMNM_OS_SYX=...), else reported as skipped, like the unit tests.
   add_test(NAME fx-thru-flat COMMAND MnmCapture --check-fx-flat)
   set_tests_properties(fx-thru-flat PROPERTIES SKIP_RETURN_CODE 77)
+  # Monomodule FX is trigged once: the knobs that act only on a trig must not close it (issue #2); One keeps the
+  # hardware's behaviour
+  add_test(NAME fx-continuous COMMAND MnmCapture --check-fx-continuous)
+  set_tests_properties(fx-continuous PROPERTIES SKIP_RETURN_CODE 77)
+  # a note-off the audio thread receives while the engine is locked waits for the next block (upstream issue #8)
+  add_test(NAME midi-lock COMMAND MnmCapture --check-midi-lock)
+  set_tests_properties(midi-lock PROPERTIES SKIP_RETURN_CODE 77)
   # Library previews through the sample-rate converter (no OS file needed), and the reported latency against what
   # bypass and (with the OS file) THRU really do
   add_test(NAME preview-resampling COMMAND MnmCapture --check-preview)

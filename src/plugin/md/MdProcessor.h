@@ -326,6 +326,12 @@ private:
     std::unique_ptr<mnm::md::Firmware> m_fw;
     std::unique_ptr<mnm::md::Engine> m_engine;   // the OS's control CPU and the two DSPs (src/md/MdEngine)
     mutable juce::CriticalSection m_engineLock;
+    // MIDI of a block the audio thread could not run (the engine locked by a firmware load or a buffer change) waits
+    // here for the next block, so no note-off is lost (a lost one left a note held: a stray note or a hung one later)
+    juce::MidiBuffer m_lateMidi;
+    static constexpr int kMaxLateMidi = 2048;
+    // guards m_status and the engines for statusText(), so the editor's status refresh never takes the audio lock
+    mutable juce::CriticalSection m_statusLock;
     std::atomic<bool> m_engineReady{false};
 
     std::array<Track, kTracks> m_tracks;

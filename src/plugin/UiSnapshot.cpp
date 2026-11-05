@@ -61,7 +61,7 @@ int main(int argc, char** argv)
         mnm::plugin::one::MnmOneProcessor proc(fxPlugin ? mnm::plugin::one::Variant::Fx : mnm::plugin::one::Variant::One);
         if (argc > 3) proc.setFirmwarePath(juce::String(argv[3]), false);
         std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
-        if (auto* led = dynamic_cast<mnm::plugin::one::OneEditor*>(ed.get())) {
+        if (auto* led = mnm::plugin::one::oneEditorOf(ed.get())) {
             if (const char* skinDlg = std::getenv("MNM_SNAPSHOT_SKIN_DIALOG"); skinDlg && *skinDlg) led->showSkinDialog();   // renders the CUSTOM skin dialog
             if (argc > 4)
                 for (int i = 0; i < mnm::uispec::kNumMachines; ++i)
@@ -253,6 +253,59 @@ int main(int argc, char** argv)
         std::printf(ok && refused ? "OK\n" : "FAILED\n");
         return ok && refused ? 0 : 1;
     }
+    if (argc == 4 && juce::String(argv[1]) == "--fxkits") {
+        // --fxkits <os.syx> <folder>: every FX track of every kit in the folder's .syx files, loaded into Monomodule FX
+        // with a steady tone in, must still put sound out two seconds on (upstream issue #11: other banks' FX presets
+        // went silent, their AMP envelopes closing the one-trig effect)
+        using namespace mnm::plugin::one;
+        MnmOneProcessor proc(Variant::Fx);
+        proc.setFirmwarePath(juce::String(argv[2]), false);
+        if (!proc.engineReady()) { std::printf("engine not ready: %s\n", proc.statusText().toRawUTF8()); return 1; }
+        proc.enableAllBuses();
+        proc.prepareToPlay(44100.0, 512);
+        juce::AudioBuffer<float> buf(2, 512);
+        double phase = 0.0;
+        auto render = [&](int blocks) {
+            double sum = 0;
+            for (int b = 0; b < blocks; ++b) {
+                for (int i = 0; i < 512; ++i) {
+                    const float v = 0.3f * (float(std::rand()) / float(RAND_MAX) * 2.0f - 1.0f);
+                    buf.setSample(0, i, v); buf.setSample(1, i, v);
+                    phase += 2.0 * juce::MathConstants<double>::pi * 220.0 / 44100.0;
+                }
+                juce::MidiBuffer midi;
+                proc.processBlock(buf, midi);
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) { const double v = buf.getSample(c, i); sum += v * v; }
+            }
+            return std::sqrt(sum / (blocks * 2.0 * 512.0));
+        };
+        int tried = 0, silent = 0;
+        for (const auto& f : juce::File(juce::String(argv[3])).findChildFiles(juce::File::findFiles, true, "*.syx")) {
+            juce::MemoryBlock mb;
+            if (!f.loadFileAsData(mb)) continue;
+            const auto d = mnm::dump::parseDump(static_cast<const uint8_t*>(mb.getData()), mb.getSize(), f.getFileName().toStdString());
+            for (const auto& kit : d.kits)
+                for (int t = 0; t < 6; ++t) {
+                    if (kit.isEmptySlot() || !mnm::host::isFxMachine(mnm::host::Machine(kit.tracks[t].model))) continue;
+                    juce::String err;
+                    if (!proc.applyKitTrack(0, kit, t, err)) continue;
+                    proc.syncMachineSideEffects();
+                    render(20);
+                    const double out = render(150);   // 2 s on
+                    ++tried;
+                    if (out < 1e-3) {
+                        ++silent;
+                        const auto& k = kit.tracks[t];
+                        juce::String pr;
+                        for (int i = 0; i < 32; ++i) pr << int(k.params[i]) << (i % 8 == 7 ? " | " : " ");
+                        std::printf("SILENT %s kit %s T%d (%.6f) model %d type %d level %d: %s\n", f.getFileName().toRawUTF8(), kit.name.c_str(), t + 1, out,
+                                    int(k.model), int(k.type), int(k.level), pr.toRawUTF8());
+                    }
+                }
+        }
+        std::printf("%d FX presets tried, %d silent: %s\n", tried, silent, tried > 0 && silent == 0 ? "OK" : "FAILED");
+        return tried > 0 && silent == 0 ? 0 : 1;
+    }
     if (argc == 3 && juce::String(argv[1]) == "--polytest") {
         // --polytest <os.syx>: headless check of Six's POLY mode. A chord on one channel must sound on as many
         // tracks as it has notes (one each); seven notes fill all six; with POLY off the chord stays on track 1.
@@ -391,7 +444,7 @@ int main(int argc, char** argv)
         if (auto* p = proc.apvts.getParameter(muteId(3))) p->setValueNotifyingHost(1.0f);   // track 4 muted
         proc.syncMachineSideEffects();
         std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
-        if (auto* led = dynamic_cast<OneEditor*>(ed.get())) { led->selectTrack(track); led->refresh(); snapshotColours(*led); }
+        if (auto* led = oneEditorOf(ed.get())) { led->selectTrack(track); led->refresh(); snapshotColours(*led); }
         save(*ed, juce::File(juce::String(argv[2])));
         ed.reset();
         return 0;
@@ -545,7 +598,7 @@ int main(int argc, char** argv)
         MnmOneProcessor proc(six ? 6 : 1);
         if (argc > 5) proc.setFirmwarePath(juce::String(argv[5]), false);
         std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
-        if (auto* led = dynamic_cast<OneEditor*>(ed.get())) {
+        if (auto* led = oneEditorOf(ed.get())) {
             LibraryBridge lib(proc, [led] { return led->selectedTrack(); });
             lib.refresh();
             lib.onLoaded = [led] { led->refresh(); };
@@ -609,7 +662,7 @@ int main(int argc, char** argv)
             MnmOneProcessor six(6);
             six.setFirmwarePath(juce::String(argv[2]), false);
             std::unique_ptr<juce::AudioProcessorEditor> ed(six.createEditor());
-            auto* led = dynamic_cast<OneEditor*>(ed.get());
+            auto* led = oneEditorOf(ed.get());
             juce::String err;
             ok = ok && led->isInterestedInFileDrag({kitFile.getFullPathName()}) && led->dropFile(kitFile, 0, err);
             for (int t = 0; t < 6; ++t) checkTrack(six, t, *kit, t, "SIX kit drop");
@@ -621,7 +674,7 @@ int main(int argc, char** argv)
             MnmOneProcessor one;
             one.setFirmwarePath(juce::String(argv[2]), false);
             std::unique_ptr<juce::AudioProcessorEditor> ed(one.createEditor());
-            auto* led = dynamic_cast<OneEditor*>(ed.get());
+            auto* led = oneEditorOf(ed.get());
             juce::String err;
             const bool refusesKit = !led->isInterestedInFileDrag({kitFile.getFullPathName()}) && !led->dropFile(kitFile, 0, err);
             std::printf("ONE refuses a kit: %s (%s)\n", refusesKit ? "OK" : "FAIL", err.toRawUTF8());

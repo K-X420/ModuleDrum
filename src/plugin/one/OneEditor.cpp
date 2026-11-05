@@ -76,6 +76,45 @@ void MachineBar::mouseDown(const juce::MouseEvent&)
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ScaleGrip
+
+void ScaleGrip::paint(juce::Graphics& g)
+{
+    LcdCanvas cv(kLcdSize, kLcdSize);   // dots on every other pixel, filling the lower-right half
+    for (int y = 0; y < kLcdSize; y += 2)
+        for (int x = 0; x < kLcdSize; x += 2)
+            if (x + y >= kLcdSize - 1) cv.set(x, y);
+    cv.draw(g, 0, 0);
+}
+
+void ScaleGrip::mouseDown(const juce::MouseEvent& e)
+{
+    m_startScreen = e.getScreenPosition().toFloat();
+    if (auto* editor = findParentComponentOfClass<juce::AudioProcessorEditor>()) {
+        m_start = editor->getBounds();
+        if (auto* c = editor->getConstrainer()) c->resizeStart();
+    }
+}
+
+void ScaleGrip::mouseDrag(const juce::MouseEvent& e)
+{
+    auto* editor = findParentComponentOfClass<juce::AudioProcessorEditor>();
+    if (editor == nullptr) return;
+    // the drag in the editor's own units (its top-left stays put while it grows or shrinks)
+    const auto d = (editor->getLocalPoint(nullptr, e.getScreenPosition().toFloat()) - editor->getLocalPoint(nullptr, m_startScreen)).roundToInt();
+    const auto r = m_start.withSize(m_start.getWidth() + d.x, m_start.getHeight() + d.y);
+    if (auto* c = editor->getConstrainer()) c->setBoundsForComponent(editor, r, false, false, true, true);
+    else editor->setBounds(r);
+}
+
+void ScaleGrip::mouseUp(const juce::MouseEvent&)
+{
+    if (auto* editor = findParentComponentOfClass<juce::AudioProcessorEditor>())
+        if (auto* c = editor->getConstrainer()) c->resizeEnd();
+}
+
+// ---------------------------------------------------------------------------
 // TrackColumn (Six)
 
 TrackColumn::TrackColumn(juce::AudioProcessorValueTreeState& apvts, int numTracks) : m_apvts(apvts), m_numTracks(numTracks)
@@ -191,11 +230,11 @@ void TrackColumn::mouseMove(const juce::MouseEvent& e)
 // OneEditor
 
 OneEditor::OneEditor(MnmOneProcessor& p)
-    : AudioProcessorEditor(p), m_proc((skin::apply(skin::load()), p)),   // the skin first: m_lnf reads it when it is built
+    : m_proc((skin::apply(skin::load()), p)),   // the skin first: m_lnf reads it when it is built
       m_footerVersion(spec::kFontSmall4x5, kPluginVersion, 2),
       m_footerAlpha(spec::kFontSmall4x5, "BY SHNOLK", 2, false, juce::Justification::centredRight),
       m_bpmLabel(spec::kFontBold8, "BPM", kScale, false, juce::Justification::centredRight),
-      m_syn(p.apvts, "SYNTHESIS"), m_amp(p.apvts, "AMPLIFICATION"), m_filt(p.apvts, "FILTER"), m_efx(p.apvts, "EFFECTS"),
+      m_syn(p.apvts, "SYNTHESIS"), m_amp(p.apvts, p.isEffect() ? "FILT/AMP" : "AMPLIFICATION"), m_filt(p.apvts, "FILTER"), m_efx(p.apvts, "EFFECTS"),
       m_lfo1(p.apvts, "LFO1"), m_lfo23(p.apvts, "LFO2"),
       m_missingOs([this] { openOsChooser(); }), m_about(p.isEffect() ? kFxTitle : p.numTracks() > 1 ? kSixTitle : kOneTitle),
       m_lib(p, [this] { return m_track; }), m_strip(p.numTracks() > 1), m_drop(m_lib), m_libPanel(m_lib), m_saveDialog(m_lib)
@@ -203,6 +242,7 @@ OneEditor::OneEditor(MnmOneProcessor& p)
     setLookAndFeel(&m_lnf);
     m_menuButton.onClick = [this] { showConfigMenu(); };
     addAndMakeVisible(m_menuButton);
+    addAndMakeVisible(m_grip);
     m_status.setFont(juce::Font(juce::FontOptions(12.0f)));
     m_fwPath.setFont(juce::Font(juce::FontOptions(12.0f)));
     addChildComponent(m_status);
@@ -218,8 +258,11 @@ OneEditor::OneEditor(MnmOneProcessor& p)
     addMouseListener(this, true);   // to close the picker on a press anywhere else
     for (int t = 0; t < m_proc.numTracks(); ++t) m_proc.apvts.addParameterListener(machineId(t), this);
 
-    for (auto* pg : {&m_syn, &m_amp, &m_filt, &m_efx, &m_lfo1, &m_lfo23}) addAndMakeVisible(pg);
-    m_lfo23.setTabs({"LFO2", "LFO3"}, 0, [this](int tab) { bindLfo(m_lfo23, tab + 1); });
+    // Monomodule FX: 2x2, the FILTER page's knobs on FILT/AMP and all three LFOs on the tabbed page
+    for (auto* pg : {&m_syn, &m_amp, &m_filt, &m_efx, &m_lfo1, &m_lfo23})
+        if (!m_proc.isEffect() || (pg != &m_filt && pg != &m_lfo1)) addAndMakeVisible(pg);
+    m_lfo23.setTabs(m_proc.isEffect() ? juce::StringArray{"LFO1", "LFO2", "LFO3"} : juce::StringArray{"LFO2", "LFO3"}, 0,
+                    [this](int tab) { bindLfo(m_lfo23, lfoOfTab(tab)); });
     addAndMakeVisible(m_level);
     if (m_proc.numTracks() > 1) {
         m_trackColumn = std::make_unique<TrackColumn>(m_proc.apvts, m_proc.numTracks());
@@ -291,9 +334,9 @@ OneEditor::OneEditor(MnmOneProcessor& p)
     addChildComponent(m_missingOs);
     m_missingOs.setVisible(!m_proc.engineReady());
 
-    const int levW = 19 * kScale, gap = 12;
+    const int levW = 19 * kScale, gap = 12, cols = m_proc.isEffect() ? 2 : 3;
     const int columnW = m_trackColumn ? gap + TrackColumn::kLcdW * kScale : 0;   // Six: the track keys on the right
-    setSize(20 + levW + 8 + 3 * KnobPage::kWidth + 2 * gap + columnW, 16 + 16 + 48 + 6 + 30 + 6 + 2 * KnobPage::kHeight + gap);
+    setSize(20 + levW + 8 + cols * KnobPage::kWidth + (cols - 1) * gap + columnW, 16 + 16 + 48 + 6 + 30 + 6 + 2 * KnobPage::kHeight + gap);
     startTimerHz(15);
     timerCallback();
 }
@@ -311,16 +354,26 @@ void OneEditor::bindTrackPages()
     auto& machineParam = *m_proc.apvts.getParameter(machineId(t));
     m_machineBar.setParameter(machineParam);
     m_picker.setParameter(machineParam);
-    auto bindShared = [this, t](KnobPage& page, Page which) {
+    // a page's top row of knobs from `upper`, its bottom row from `lower` (the same page except FX's FILT/AMP); a knob a
+    // continuous effect holds is blank, as an unused knob is on the hardware
+    auto bindShared = [this, t](KnobPage& page, Page upper, Page lower) {
         spec::Param params[8];
-        for (int k = 0; k < 8; ++k) params[k] = sharedPageParam(which, k);
-        page.bind(params, [t, which](int k) { return pageId(t, which, k); });
+        for (int k = 0; k < 8; ++k) {
+            const Page which = k < 4 ? upper : lower;
+            params[k] = sharedPageParam(which, k);
+            if (m_proc.isEffect() && isTrigOnly(which, k)) params[k] = {"---", spec::Display::Blank, false, params[k].defaultRaw, 127, 128, spec::Icons::None, nullptr};
+        }
+        page.bind(params, [t, upper, lower](int k) { return pageId(t, k < 4 ? upper : lower, k); });
     };
-    bindShared(m_amp, Page::AMP);
-    bindShared(m_filt, Page::FILT);
-    bindShared(m_efx, Page::EFX);
-    bindLfo(m_lfo1, 0);
-    bindLfo(m_lfo23, m_lfo23.currentTab() + 1);
+    if (m_proc.isEffect()) {
+        bindShared(m_amp, Page::FILT, Page::AMP);   // FILT/AMP: BASE WDTH HPQ LPQ over DIST VOL PAN, the rest of both pages held
+    } else {
+        bindShared(m_amp, Page::AMP, Page::AMP);
+        bindShared(m_filt, Page::FILT, Page::FILT);
+        bindLfo(m_lfo1, 0);
+    }
+    bindShared(m_efx, Page::EFX, Page::EFX);
+    bindLfo(m_lfo23, lfoOfTab(m_lfo23.currentTab()));
     m_shownSlot = -1;
     rebuildSynPage();
     m_levelAttach.reset();
@@ -401,13 +454,33 @@ void OneEditor::updateStrip()
     m_strip.setOpen(m_drop.isVisible() ? (m_drop.kits() ? PresetStrip::Kit : PresetStrip::Preset) : PresetStrip::None, m_libPanel.isOpen());
 }
 
-// The LFO page: the eight LFO knobs; DEST's names and icon follow the PAGE knob of the same LFO.
+// Monomodule FX's LFO DEST names: the knobs it holds (isTrigOnly) are "---", as the AMP and FILTER pages show them.
+static const char* const* effectDestNames(int page)
+{
+    static const auto names = [] {
+        std::array<std::array<const char*, 8>, 9> n{};
+        for (int p = 0; p < 9; ++p)
+            for (int k = 0; k < 8; ++k) {
+                const bool held = (p == LfoPageAmp && isTrigOnly(Page::AMP, k)) || (p == LfoPageFilt && isTrigOnly(Page::FILT, k));
+                n[size_t(p)][size_t(k)] = held ? "---" : spec::kLfoDestNames[p][k];
+            }
+        return n;
+    }();
+    return names[size_t(page)].data();
+}
+
+// The LFO page: the eight LFO knobs; DEST's names and icon follow the PAGE knob of the same LFO. In Monomodule FX the
+// TRIG knob offers FREE and TRIG only (HOLD, ONE and HALF play as TRIG there: HostModel::setContinuous).
 void OneEditor::bindLfo(KnobPage& page, int lfo)
 {
     const int t = m_track;
-    page.bind(spec::kLfoParams, [t, lfo](int k) { return lfoId(t, lfo, k); });
+    std::array<spec::Param, 8> params;
+    std::copy(std::begin(spec::kLfoParams), std::end(spec::kLfoParams), params.begin());
+    const bool fx = m_proc.isEffect();
+    if (fx) params[LfoTrig].maxRaw = uint8_t(spec::listRawLast(LfoTrigged, 5));
+    page.bind(params.data(), [t, lfo](int k) { return lfoId(t, lfo, k); });
     auto pageIdx = [&page] { return spec::listIndex(page.cellValue(0), 9); };
-    page.setValuesSource(1, [pageIdx] { return spec::kLfoDestNames[pageIdx()]; });   // the DEST icon itself marks knob A-H
+    page.setValuesSource(1, [pageIdx, fx] { return fx ? effectDestNames(pageIdx()) : spec::kLfoDestNames[pageIdx()]; });   // the DEST icon itself marks knob A-H
 }
 
 void OneEditor::rebuildSynPage()
@@ -618,7 +691,7 @@ int OneEditor::dropTargetTrack(int x, int y) const
 
 juce::Rectangle<int> OneEditor::dropFrame(const juce::StringArray& files, int x, int y) const
 {
-    const auto pages = juce::Rectangle<int>(m_syn.getX(), m_syn.getY() + m_syn.overhangPx(), m_lfo1.getRight() - m_syn.getX(), m_lfo23.getBottom() - m_syn.getY() - m_syn.overhangPx());
+    const auto pages = juce::Rectangle<int>(m_syn.getX(), m_syn.getY() + m_syn.overhangPx(), m_lfo23.getRight() - m_syn.getX(), m_lfo23.getBottom() - m_syn.getY() - m_syn.overhangPx());
     bool kit = false;
     for (const auto& f : files) kit = kit || mnm::library::isTransferFile(f, TransferKind::Kit);
     if (kit && m_trackColumn) return pages.getUnion(m_trackColumn->getBounds());
@@ -667,6 +740,12 @@ void OneEditor::resized()
     auto r = getLocalBounds().reduced(10, 8);
     auto footer = r.removeFromBottom(16);
     m_footerVersion.setBounds(footer.removeFromLeft(200));
+    {   // the grip at the footer's right end; it takes presses out to the window's corner
+        const int gripPx = ScaleGrip::kLcdSize * kScale;
+        const juce::Point<int> at(footer.getRight() - gripPx, footer.getBottom() - gripPx);
+        m_grip.setBounds(at.x, at.y, getWidth() - at.x, getHeight() - at.y);
+        footer.removeFromRight(gripPx + 8);
+    }
     m_footerAlpha.setBounds(footer.removeFromRight(240));
 
     const int levW = 19 * kScale, top = r.getY();
@@ -683,7 +762,11 @@ void OneEditor::resized()
     headerTop.removeFromRight(8);
     m_bpm.setBounds(headerTop.removeFromRight(62 * kScale));   // "120.0" in the tall digit face is 59 px
     m_bpmLabel.setBounds(headerTop.removeFromRight(22 * kScale));
-    {   // the library strip: centred between the machine block and the tempo, as wide as that leaves
+    if (m_proc.isEffect()) {   // two pages wide: the library strip goes under the tempo, right-aligned with MENU
+        const int x0 = m_machineBar.getRight() + 12, x1 = m_menuButton.getRight();
+        const int w = m_strip.preferredWidth(juce::jmax(0, x1 - x0));
+        m_strip.setBounds(x1 - w, m_menuButton.getBottom() + 6, w, PresetStrip::kLcdH * PresetStrip::kS);
+    } else {   // the library strip: centred between the machine block and the tempo, as wide as that leaves
         const int x0 = m_machineBar.getRight() + 12, x1 = m_bpmLabel.getX() - 4;
         const int w = m_strip.preferredWidth(juce::jmax(0, x1 - x0));
         m_strip.setBounds(x0 + (x1 - x0 - w) / 2, top, w, PresetStrip::kLcdH * PresetStrip::kS);
@@ -695,10 +778,12 @@ void OneEditor::resized()
         m_poly.setBounds(x, y, widthOf("POLY"), h);
         m_copyAll.setBounds(m_poly.getRight() + 10, y, widthOf("COPY T6 TO ALL"), h);
     }
-    if (m_showStatus) {   // beside the machine block
+    if (m_showStatus) {   // beside the machine block (FX: under the library strip, still within the space they add)
         const int statusX = m_machineBar.getRight() + 10;
-        m_status.setBounds(r.removeFromTop(18).withTrimmedLeft(statusX - r.getX()));
-        m_fwPath.setBounds(r.removeFromTop(18).withTrimmedLeft(statusX - r.getX()));
+        auto lines = r.removeFromTop(36).withTrimmedLeft(statusX - r.getX());
+        if (m_proc.isEffect()) lines.setY(m_strip.getBottom() + 4);
+        m_status.setBounds(lines.removeFromTop(18));
+        m_fwPath.setBounds(lines);
     }
     r.removeFromTop(6);
 
@@ -717,17 +802,21 @@ void OneEditor::resized()
 
     const int gap = 12;
     auto place = [](juce::Rectangle<int> r, KnobPage& page) { page.setBounds(r.withTop(r.getY() - page.overhangPx())); };   // tabs stand above the page
-    auto placeRow = [&](juce::Rectangle<int> row, KnobPage& a, KnobPage& b, KnobPage& c) {
-        place(row.removeFromLeft(KnobPage::kWidth), a); row.removeFromLeft(gap);
-        place(row.removeFromLeft(KnobPage::kWidth), b); row.removeFromLeft(gap);
-        place(row.removeFromLeft(KnobPage::kWidth), c);
+    auto placeRow = [&](juce::Rectangle<int> row, std::initializer_list<KnobPage*> pages) {
+        for (auto* page : pages) { place(row.removeFromLeft(KnobPage::kWidth), *page); row.removeFromLeft(gap); }
     };
-    placeRow(body.removeFromTop(KnobPage::kHeight), m_syn, m_amp, m_lfo1);
+    const bool fx = m_proc.isEffect();
+    if (fx) placeRow(body.removeFromTop(KnobPage::kHeight), {&m_syn, &m_amp});
+    else placeRow(body.removeFromTop(KnobPage::kHeight), {&m_syn, &m_amp, &m_lfo1});
     body.removeFromTop(gap);
-    placeRow(body.removeFromTop(KnobPage::kHeight), m_filt, m_efx, m_lfo23);
+    if (fx) placeRow(body.removeFromTop(KnobPage::kHeight), {&m_efx, &m_lfo23});
+    else placeRow(body.removeFromTop(KnobPage::kHeight), {&m_filt, &m_efx, &m_lfo23});
 
-    m_picker.setTargetBounds({m_syn.getX(), m_syn.getY(), m_lfo1.getRight() - m_syn.getX(), m_lfo23.getBottom() - m_syn.getY()});   // the six pages' area
-    m_libPanel.setTargetBounds({m_syn.getX(), m_syn.getY(), m_lfo1.getRight() - m_syn.getX(), m_lfo23.getBottom() - m_syn.getY()});   // Six: the track keys stay in view
+    // the pages' area (LFO2/3 is the bottom-right page in every layout). Six: the library panel leaves the track keys
+    // in view. The picker sizes its columns for One's three pages, so FX's one column keeps its width.
+    const juce::Rectangle<int> pages{m_syn.getX(), m_syn.getY(), m_lfo23.getRight() - m_syn.getX(), m_lfo23.getBottom() - m_syn.getY()};
+    m_picker.setTargetBounds(pages.withWidth(3 * KnobPage::kWidth + 2 * gap));
+    m_libPanel.setTargetBounds(pages);
     m_saveDialog.setBounds(getLocalBounds());
     m_skinDialog.setBounds(getLocalBounds());
     m_missingOs.setBounds(getLocalBounds());

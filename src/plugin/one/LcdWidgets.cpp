@@ -160,13 +160,15 @@ void KnobPage::showValueList(int k)
     if (p.display != spec::Display::List && p.display != spec::Display::Readout) return;
     const int raw = int(std::lround(m_cells[size_t(k)].getValue()));
     const int current = p.display == spec::Display::List ? spec::listIndex(raw, p.valueCount) : raw;
-    juce::PopupMenu m;
-    for (int i = 0; i < p.valueCount; ++i) m.addItem(i + 1, p.values[i], true, i == current);
     const bool list = p.display == spec::Display::List;
     const int n = p.valueCount;
+    juce::PopupMenu m;
+    for (int i = 0; i < n; ++i)
+        if ((list ? spec::listRawMid(i, n) : i) <= p.maxRaw) m.addItem(i + 1, p.values[i], true, i == current);   // the entries the knob reaches
     const int x0 = (k % 4) * kCell, y0 = overhangRows() + kGridY + (k / 4) * kCell;
-    const auto anchor = (knobValueBox(x0, y0) * kScale) + getScreenPosition();
-    m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(anchor).withMinimumWidth(kCell * kScale),
+    // the target component scales the menu with the window (ScaledEditor); the area places it under the value
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea(localAreaToGlobal(knobValueBox(x0, y0) * kScale))
+                        .withMinimumWidth(kCell * kScale),
         [this, k, list, n](int r) {
             if (r <= 0) return;
             const int idx = r - 1;
@@ -254,6 +256,9 @@ void KnobPage::bind(const spec::Param* params8, const std::function<juce::String
                           dial ? juce::MouseCursor::IBeamCursor : juce::MouseCursor::PointingHandCursor);
         if (blank) continue;   // a blank cell may have no parameter behind it (the MD's short pages)
         m_attach[size_t(k)] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(m_apvts, paramId(k), cell);
+        // a knob shown with less than its parameter's range (Monomodule FX's LFO TRIG) turns within it; a stored value
+        // beyond shows as the top of it, and is only rewritten when the knob is turned
+        if (params8[k].maxRaw < cell.getMaximum()) cell.setRange(cell.getMinimum(), double(params8[k].maxRaw), 1.0);
         cell.setDoubleClickReturnValue(true, double(params8[k].defaultRaw));
         cell.setToggle(params8[k].display == spec::Display::Readout && params8[k].icons == spec::Icons::Toggle && params8[k].valueCount == 2);
     }

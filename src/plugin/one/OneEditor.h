@@ -1,6 +1,7 @@
 // Monomodule One / Six editor: header, LEV column, machine block, the six pages (2 rows x 3), and on
 // Six a column of six track keys on the right (the hardware's track keys) that selects which track the
-// pages, machine block and LEV column edit. Every element is drawn from the hardware's LCD glyphs and
+// pages, machine block and LEV column edit. Monomodule FX has four pages (2 x 2: SYNTHESIS, FILT/AMP, EFFECTS,
+// LFO1-3 as tabs), the library strip under the tempo. Every element is drawn from the hardware's LCD glyphs and
 // fonts, black on white.
 #pragma once
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -12,6 +13,7 @@
 #include "MachinePicker.h"
 #include "SkinDialog.h"
 #include "LibraryUi.h"
+#include "ScaledEditor.h"
 
 namespace mnm::plugin::one {
 
@@ -68,7 +70,25 @@ private:
     std::array<bool, kMaxTracks> m_mute{}, m_active{};
 };
 
-class OneEditor : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget, private juce::Timer,
+// The corner grip, a dotted triangle of LCD pixels: dragging it resizes the plugin editor that shows this view scaled
+// (scale::ScaledEditor), through the editor's constrainer, so the aspect ratio stays locked. It works in every host and
+// format, including AUv2, where hosts do not resize plugin windows themselves.
+class ScaleGrip : public juce::Component {
+public:
+    static constexpr int kLcdSize = 5;
+    ScaleGrip() { setMouseCursor(juce::MouseCursor::BottomRightCornerResizeCursor); }
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+private:
+    juce::Rectangle<int> m_start;          // the editor's bounds when the drag began
+    juce::Point<float> m_startScreen;      // the mouse then (screen coordinates: the grip itself moves as the view scales)
+};
+
+// The editor's content, laid out at its base size; the plugins' editor shows it scaled (scale::ScaledEditor, see
+// MnmOneProcessor::createEditor and oneEditorOf).
+class OneEditor : public juce::Component, public juce::FileDragAndDropTarget, private juce::Timer,
                   private juce::AudioProcessorValueTreeState::Listener {
 public:
     explicit OneEditor(MnmOneProcessor&);
@@ -121,6 +141,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> m_polyAttach;
     LcdButton m_copyAll{"COPY T1 TO ALL"};
     void copySoundToAll();
+    ScaleGrip m_grip;
     MachineBar m_machineBar;
     BpmReadout m_bpm;
     LevelColumn m_level;
@@ -133,6 +154,7 @@ private:
     bool m_dragOver = false;
     juce::Rectangle<int> m_dropRect;
     void bindLfo(KnobPage& page, int lfo);
+    int lfoOfTab(int tab) const { return m_proc.isEffect() ? tab : tab + 1; }   // the tabbed LFO page: FX LFO1-3, else LFO2-3
     void bindTrackPages();
     std::unique_ptr<juce::FileChooser> m_chooser;
     MissingOsOverlay m_missingOs;
@@ -156,5 +178,12 @@ private:
     juce::String m_artPath;   // the OS path the LCD artwork was last requested for
     int m_skinPollCountdown = 0;
 };
+
+// The One editor inside a plugin editor made by MnmOneProcessor::createEditor (dev tools), or null.
+inline OneEditor* oneEditorOf(juce::AudioProcessorEditor* editor)
+{
+    auto* scaled = dynamic_cast<scale::ScaledEditor*>(editor);
+    return scaled != nullptr ? dynamic_cast<OneEditor*>(&scaled->view()) : nullptr;
+}
 
 } // namespace mnm::plugin::one

@@ -1,7 +1,7 @@
 // Dev tool (not installed): renders fixed audio scenarios through the plugin processor, along the exact path a host
 // drives (MnmOneProcessor::prepareToPlay + processBlock with MIDI, a transport and the main/side-chain input), to
 // 32-bit float WAV files. Made for before/after comparisons of the audio path: the 44.1 kHz references the resampling
-// rework is checked against (issue #3), and the FX key-tracking check (issue #5).
+// rework is checked against (issue #3), and the FX key-tracking (issue #5) and continuous-effect (issue #2) checks.
 //
 //   MnmCapture --list
 //   MnmCapture --out <dir> [--fw os.syx] [--rates 44100,48000] [--blocks 512,32,441,2048,var] [--scenario a,b]
@@ -15,6 +15,9 @@
 //   MnmCapture --check-fx-flat [--fw os.syx]
 //       Pass/fail (ctest): THRU in Monomodule FX must stay within 1 dB of its 1 kHz level from 30 Hz to 4 kHz, with the
 //       key-tracking parameters on as a 1.0.1 session saves them. Exit code 77 (skipped) without an OS file.
+//   MnmCapture --check-fx-continuous [--fw os.syx]
+//       Pass/fail (ctest): Monomodule FX ignores the knobs that act only on a trig (issue #2), One does not. Exit code 77
+//       (skipped) without an OS file.
 //   MnmCapture --check-preview
 //       Pass/fail (ctest, no OS file needed): library previews through the sample-rate converter at 44.1/48/96 kHz.
 //   MnmCapture --check-latency [--fw os.syx]
@@ -32,6 +35,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <thread>
 #include <limits>
 #include <vector>
 #include "one/OneProcessor.h"
@@ -466,6 +470,17 @@ double rmsDb(const Audio& a)
     return e > 0.0 && n > 0.0 ? 10.0 * std::log10(e / n) : -999.0;
 }
 
+// the same over `from` .. `to` seconds
+double rmsDbBetween(const Audio& a, double from, double to)
+{
+    const auto i0 = juce::jlimit<juce::int64>(0, a.frames(), juce::int64(from * a.rate));
+    const auto i1 = juce::jlimit<juce::int64>(i0, a.frames(), juce::int64(to * a.rate));
+    double e = 0.0;
+    for (const auto& c : a.ch) for (auto i = i0; i < i1; ++i) e += double(c[size_t(i)]) * c[size_t(i)];
+    const double n = double(i1 - i0) * a.channels();
+    return e > 0.0 && n > 0.0 ? 10.0 * std::log10(e / n) : -999.0;
+}
+
 // largest sample difference; 0 = identical (also compares the lengths)
 float maxDiff(const Audio& a, const Audio& b)
 {
@@ -588,6 +603,87 @@ int checkFxFlat(const juce::String& fw)
     }
     std::printf(ok ? "OK\n" : "FAILED\n");
     return ok ? 0 : 1;
+}
+
+// Issue #8 (upstream): a note-off in a block the audio thread could not run (the engine lock held: a firmware load, or
+// before the fix the editor's status refresh) was dropped, so the note stayed held; a later note-off then fell back to
+// it (a stray note an octave off) or nothing released at all (a hung note). The note-off must wait for the next block.
+int checkMidiLock(const juce::String& fw)
+{
+    MnmOneProcessor p(Variant::One);
+    p.setFirmwarePath(fw, false);
+    if (!p.engineReady()) { std::printf("engine not ready: %s\n", p.statusText().toRawUTF8()); return 1; }
+    p.prepareToPlay(44100.0, 512);
+    juce::AudioBuffer<float> buf(2, 512);
+    auto block = [&](std::initializer_list<juce::MidiMessage> msgs) {
+        juce::MidiBuffer midi;
+        for (const auto& m : msgs) midi.addEvent(m, 100);
+        buf.clear();
+        p.processBlock(buf, midi);
+    };
+    auto lockedBlock = [&](std::initializer_list<juce::MidiMessage> msgs) {   // another thread holds the engine meanwhile
+        std::atomic<int> stage{0};
+        std::thread holder([&] { const juce::ScopedLock sl(p.devEngineLock()); stage = 1; while (stage.load() != 2) juce::Thread::sleep(1); });
+        while (stage.load() != 1) juce::Thread::sleep(1);
+        block(msgs);
+        stage = 2;
+        holder.join();
+    };
+    bool ok = true;
+    auto check = [&](const char* what, bool good) { std::printf("  %-62s %s\n", what, good ? "ok" : "FAIL"); ok = ok && good; };
+    block({juce::MidiMessage::noteOn(1, 50, 1.0f)});
+    check("note on: one note held", p.devHeldNotes(0) == 1);
+    lockedBlock({juce::MidiMessage::noteOff(1, 50)});
+    block({});
+    check("note-off sent while the engine was locked: released next block", p.devHeldNotes(0) == 0);
+    block({juce::MidiMessage::noteOn(1, 62, 1.0f)});
+    block({juce::MidiMessage::noteOff(1, 62)});
+    check("a later note's release leaves nothing held (no fall-back note)", p.devHeldNotes(0) == 0);
+    std::atomic<bool> run{true};   // the status refresh, as the editor's timer does it, never blocks the audio thread
+    std::thread poll([&] { while (run.load()) juce::ignoreUnused(p.statusText()); });
+    int held = 0;
+    for (int i = 0; i < 400; ++i) { block({juce::MidiMessage::noteOn(1, 40 + i % 30, 1.0f)}); block({juce::MidiMessage::noteOff(1, 40 + i % 30)}); held = juce::jmax(held, p.devHeldNotes(0)); }
+    run = false;
+    poll.join();
+    check("400 notes while the status is polled: none left held", p.devHeldNotes(0) == 0 && held == 0);
+    std::printf(ok ? "OK\n" : "FAILED\n");
+    return ok ? 0 : 1;
+}
+
+int checkFxContinuous(const juce::String& fw)
+{
+    // Issue #2: Monomodule FX is trigged once, so a knob that needs a trig must not close it. With every such knob set as
+    // it would close a hardware FX track (a short AMP envelope without release, portamento, a filter envelope, an LFO
+    // pulling DEC down, LFO trig modes that stop after one trig), FX must put out exactly what its defaults do, sample
+    // for sample. One keeps the hardware's behaviour: the same settings on its THRU track die away after the one trig.
+    auto closing = [](Setup& p) {
+        p.amp(0, 0, 127); p.amp(0, 1, 0); p.amp(0, 2, 20); p.amp(0, 3, 0); p.amp(0, 7, 127);   // ATK HOLD DEC REL PORT
+        p.filt(0, 4, 64); p.filt(0, 5, 64); p.filt(0, 6, 0); p.filt(0, 7, 127);                // filter envelope ATK DEC BOFS WOFS
+        p.lfo(0, 0, 2, 2, 3, 5, 0, 0, 0, 127);    // LFO1: AMP DEC, ONE, ISQR held low, full depth
+        p.lfo(0, 1, 3, 6, 2, 0, 1, 64, 0, 127);   // LFO2: FILT BOFS, HOLD, TRI
+    };
+    const int ticks = 160;   // 8.5 s of 40 steady sines into THRU
+    auto render2 = [&](Variant v, bool closed, Audio& out) {
+        Scenario s; s.name = "fx-continuous"; s.variant = v; s.ticks = ticks; s.input = Input::Multitone; s.sideChain = v != Variant::Fx;
+        s.setup = [closed, closing](Setup& p) { p.machine(0, Machine::THRU); if (closed) closing(p); };
+        juce::String error;
+        if (!render(s, fw, 44100.0, Blocks{}, out, nullptr, error)) { std::printf("render failed: %s\n", error.toRawUTF8()); return false; }
+        return true;
+    };
+    Audio fxOpen, fxClosed, oneOpen, oneClosed;
+    if (!render2(Variant::Fx, false, fxOpen) || !render2(Variant::Fx, true, fxClosed) || !render2(Variant::One, false, oneOpen) || !render2(Variant::One, true, oneClosed))
+        return 1;
+    const double end = (ticks - kTailTicks) * kTickSeconds;   // where the FX input stops; the last second before it
+    auto late = [end](const Audio& a) { return rmsDbBetween(a, end - 1.0, end); };
+    const float diff = maxDiff(fxOpen, fxClosed);
+    const bool fxOk = late(fxOpen) > -40.0 && diff == 0.f;
+    const bool oneOk = late(oneOpen) > -40.0 && late(oneClosed) < late(oneOpen) - 40.0;
+    std::printf("THRU, last second of %.1f s, defaults vs the trig-only knobs set to close it:\n", end);
+    std::printf("  FX   %6.1f dBFS vs %6.1f dBFS, largest sample difference %g  %s\n", late(fxOpen), late(fxClosed), double(diff),
+                fxOk ? "ok" : "FAIL (FX must ignore them)");
+    std::printf("  One  %6.1f dBFS vs %6.1f dBFS  %s\n", late(oneOpen), late(oneClosed), oneOk ? "ok" : "FAIL (One must close as the hardware does)");
+    std::printf(fxOk && oneOk ? "OK\n" : "FAILED\n");
+    return fxOk && oneOk ? 0 : 1;
 }
 
 int capture(const juce::String& fw, const juce::File& outDir, const std::vector<double>& rates, const std::vector<Blocks>& blocks,
@@ -776,6 +872,7 @@ void usage()
         "MnmCapture --out <dir> [--fw os.syx] [--rates 44100,...] [--blocks 512,32,441,2048,var] [--scenario a,b] [--inputs] [--keep-blocks] [--note text]\n"
         "MnmCapture --fx-response [--fw os.syx] [--machines THRU,REVERB] [--csv file]\n"
         "MnmCapture --check-fx-flat [--fw os.syx]\n"
+        "MnmCapture --check-fx-continuous [--fw os.syx]\n"
         "MnmCapture --check-preview\n"
         "MnmCapture --check-latency [--fw os.syx]\n");
 }
@@ -795,7 +892,7 @@ int main(int argc, char** argv)
         const juce::String a(argv[i]);
         auto value = [&]() -> juce::String { return i + 1 < argc ? juce::String(argv[++i]) : juce::String(); };
         auto list = [&]() { juce::StringArray l; l.addTokens(value(), ",", ""); l.trim(); l.removeEmptyStrings(); return l; };
-        if (a == "--list" || a == "--fx-response" || a == "--check-fx-flat" || a == "--check-preview" || a == "--check-latency") mode = a;
+        if (a == "--list" || a == "--fx-response" || a == "--check-fx-flat" || a == "--check-fx-continuous" || a == "--check-preview" || a == "--check-latency" || a == "--check-midi-lock") mode = a;
         else if (a == "--out") { mode = a; outDir = value(); }
         else if (a == "--fw") fw = value();
         else if (a == "--rates") rates = list();
@@ -818,11 +915,13 @@ int main(int argc, char** argv)
                                 ? juce::File::getCurrentWorkingDirectory().getChildFile(fw).getFullPathName() : juce::String());
     if (fw.isEmpty() || !juce::File::getCurrentWorkingDirectory().getChildFile(fw).existsAsFile()) {
         std::printf("no Monomachine OS file (pass --fw, set MNM_OS or -DMNM_OS_SYX=...): skipped\n");
-        return mode == "--check-fx-flat" ? kSkipped : 2;
+        return mode == "--check-fx-flat" || mode == "--check-fx-continuous" || mode == "--check-midi-lock" ? kSkipped : 2;
     }
     fw = juce::File::getCurrentWorkingDirectory().getChildFile(fw).getFullPathName();
     if (mode == "--fx-response") return fxResponse(fw, machines, csv);
     if (mode == "--check-fx-flat") return checkFxFlat(fw);
+    if (mode == "--check-fx-continuous") return checkFxContinuous(fw);
+    if (mode == "--check-midi-lock") return checkMidiLock(fw);
 
     std::vector<double> rateList;
     for (const auto& r : rates) if (r.getDoubleValue() >= 8000.0) rateList.push_back(r.getDoubleValue()); else { usage(); return 2; }

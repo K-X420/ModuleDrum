@@ -6,7 +6,9 @@
 //       track channels), one stereo output bus per track. FX machines take the previous track's output
 //       (NEIBOR) or the side-chain input (INP AB), as KIT > ROUTING offers on the hardware.
 //   FX (Variant::Fx): One as an audio effect. One track that offers only the FX machines and processes the
-//       plugin's main input; no MIDI. Everything else (pages, LFOs, library, state) is One's.
+//       plugin's main input; no MIDI. It runs as a continuous effect: the knobs that act only on a trig or a note
+//       (host::kTrigOnlyWords) are held open in the engine and hidden in the editor, but stay parameters with their
+//       stored values. Everything else (pages, LFOs, library, state, the parameter list) is One's.
 // Every knob is stored raw 0..127 exactly as the hardware kit byte; only the display differs.
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -116,6 +118,9 @@ public:
     void initPreset();
     juce::String statusText() const;
     bool engineReady() const { return m_engineReady.load(); }
+    // tests: the lock the audio thread tries (a firmware load holds it), and a track's held notes
+    juce::CriticalSection& devEngineLock() { return m_engineLock; }
+    int devHeldNotes(int t) const { return int(m_tracks[size_t(t)]->heldNotes.size()); }
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -189,6 +194,12 @@ private:
     std::unique_ptr<fw::Firmware> m_firmware;   // shared by all track voices
     std::vector<std::unique_ptr<Track>> m_tracks;
     juce::CriticalSection m_engineLock;
+    // MIDI of a block the audio thread could not run (the engine locked by a firmware load or a buffer change) waits
+    // here for the next block, so no note-off is lost (a lost one left a note held: a stray note or a hung one later)
+    juce::MidiBuffer m_lateMidi;
+    static constexpr int kMaxLateMidi = 2048;
+    // guards m_status and the engines for statusText(), so the editor's status refresh never takes the audio lock
+    mutable juce::CriticalSection m_statusLock;
     std::atomic<bool> m_engineReady{false};
     juce::String m_status;
     double m_hostRate = 44100.0;

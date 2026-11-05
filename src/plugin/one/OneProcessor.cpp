@@ -1,6 +1,7 @@
 #include "OneProcessor.h"
 #include "OneEditor.h"
 #include "SharedSettings.h"
+#include "LateMidi.h"
 #include "Store.h"
 #include <cmath>
 #include <map>
@@ -84,6 +85,7 @@ void MnmOneProcessor::loadEngine()
             const int slot = machineSlotOf(*tr);
             tr->currentMachine = machineSupported(slot) ? machineAt(slot) : host::Machine::SAW;   // preview machines: engine idles on SAW
             auto v = std::make_unique<MonoVoice>(*fwNew);
+            v->host().setContinuous(isEffect());   // FX: no trigs after the first, so nothing that needs one may close it
             v->host().setMachine(tr->currentMachine);
             v->host().setOutBuses(uint32_t(outBusMask(*tr)));
             v->host().setKeyTracking(keyTracks(tr->lpKeyTrack), keyTracks(tr->hpKeyTrack));
@@ -100,6 +102,7 @@ void MnmOneProcessor::loadEngine()
     }
     {
         const juce::ScopedLock sl(m_engineLock);
+        const juce::ScopedLock st(m_statusLock);
         m_engineReady = false;
         for (size_t t = 0; t < m_tracks.size(); ++t) {
             m_tracks[t]->voice = fwNew ? std::move(voices[t]) : nullptr;
@@ -410,7 +413,7 @@ bool MnmOneProcessor::previewPoll()
 
 juce::String MnmOneProcessor::statusText() const
 {
-    const juce::ScopedLock sl(m_engineLock);
+    const juce::ScopedLock sl(m_statusLock);   // not the engine lock: a status refresh must never stall the audio thread
     juce::String s = m_status;
     for (const auto& tr : m_tracks)
         if (tr->voice && tr->voice->engine().faulted()) {
@@ -473,6 +476,8 @@ void MnmOneProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     }
     m_midi.clear();
     m_midi.reserve(kMaxPendingMidi);
+    m_lateMidi.clear();
+    m_lateMidi.ensureSize(size_t(kMaxLateMidi) * 8);
     m_hostPos = m_enginePos = 0;
     const int latency = latencyAt(sampleRate);
     setLatencySamples(latency);
@@ -854,7 +859,9 @@ void MnmOneProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     if (auto main = getBusBuffer(buffer, false, 0); main.getNumChannels() > 0)   // a library preview plays whether or not the engine does
         m_previewVoice.process(main.getWritePointer(0), main.getNumChannels() > 1 ? main.getWritePointer(1) : nullptr, main.getNumSamples(), m_hostRate, false);
     const juce::ScopedTryLock sl(m_engineLock);
-    if (!sl.isLocked() || !m_engineReady) { midi.clear(); return; }
+    if (!sl.isLocked()) { keepLateMidi(m_lateMidi, midi, kMaxLateMidi); midi.clear(); return; }
+    if (!m_engineReady) { m_lateMidi.clear(); midi.clear(); return; }
+    takeLateMidi(m_lateMidi, midi);
     // POLY (Six): the notes spread over the tracks first (channels 1-6), then queued as any MIDI
     const bool poly = m_poly && m_poly->load() >= 0.5f;
     if (poly != m_wasPoly) {   // switching modes: nothing stays stuck from the other one
@@ -898,7 +905,7 @@ void MnmOneProcessor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juc
 juce::AudioProcessorEditor* MnmOneProcessor::createEditor()
 {
     loadLcdArt(m_firmwarePath);   // before the editor measures any text
-    return new OneEditor(*this);
+    return new scale::ScaledEditor(*this, std::make_unique<OneEditor>(*this));   // resizable, the layout scaled as a whole
 }
 
 // State schema 4 (2026-09): every knob raw 0..127, machine = slot in uispec::kMachines, per-track ids
