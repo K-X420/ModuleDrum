@@ -32,6 +32,8 @@ int mdXtraTest(TestEnv& env, const char* value);
 int mdXtra2Test(TestEnv& env, const char* value);
 int mdPoolTest(TestEnv& env, const char* value);
 int mdSeqXTest(TestEnv& env, const char* value);
+int mdTonalScan(TestEnv& env, const char* value);
+int mdEditXTest(TestEnv& env, const char* value);
 int mdDemoReel(TestEnv& env, int which);   // MD_DEMO=reel / reel2
 int mdToolsTest(TestEnv& env, const char* value);
 int mdInputTest(TestEnv& env, const char* value);

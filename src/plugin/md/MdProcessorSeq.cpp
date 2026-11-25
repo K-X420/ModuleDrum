@@ -10,6 +10,30 @@ bool MdProcessor::bankHasPattern(int slot) const
     return m_bank && slot >= 0 && slot < 128 && m_bank->hasPattern[size_t(slot)];
 }
 
+bool MdProcessor::bankHasKit(int slot) const
+{
+    const juce::SpinLock::ScopedLockType l(m_bankLock);
+    return m_bank && slot >= 0 && slot < 64 && m_bank->hasKit[size_t(slot)];
+}
+
+void MdProcessor::setBankKit(int slot, const mnm::mddump::Kit& kit)
+{
+    if (slot < 0 || slot >= 64) return;
+    std::shared_ptr<const SeqBank> cur;
+    { const juce::SpinLock::ScopedLockType l(m_bankLock); cur = m_bank; }
+    auto bank = cur ? std::make_shared<SeqBank>(*cur) : std::make_shared<SeqBank>();
+    if (!cur) { bank->patterns.resize(128); bank->kits.resize(64); bank->songs.resize(32); m_bankName = "PLUGIN"; }
+    bank->kits[size_t(slot)] = kit;
+    bank->kits[size_t(slot)].position = slot;
+    bank->hasKit[size_t(slot)] = true;
+    {
+        const juce::SpinLock::ScopedLockType l(m_bankLock);
+        m_bankOld = std::move(m_bank);
+        m_bank = std::move(bank);
+    }
+    if (!cur) m_bankFresh.store(true);
+}
+
 std::shared_ptr<const mnm::mddump::Song> MdProcessor::bankSong(int slot) const
 {
     const juce::SpinLock::ScopedLockType l(m_bankLock);

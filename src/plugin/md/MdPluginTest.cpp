@@ -88,6 +88,8 @@ int main(int argc, char** argv)
     if (const char* v = std::getenv("MD_XTRA2_TEST")) return test::mdXtra2Test(env, v);
     if (const char* v = std::getenv("MD_POOL_TEST")) return test::mdPoolTest(env, v);
     if (const char* v = std::getenv("MD_SEQX_TEST")) return test::mdSeqXTest(env, v);
+    if (const char* v = std::getenv("MD_TONALSCAN")) return test::mdTonalScan(env, v);
+    if (const char* v = std::getenv("MD_EDITX_TEST")) return test::mdEditXTest(env, v);
     if (const char* v = std::getenv("MD_TOOLS_TEST")) return test::mdToolsTest(env, v);
     if (const char* v = std::getenv("MD_BENCH")) return test::mdBench(env, v);
     if (const char* v = std::getenv("MD_DEMO")) return test::mdDemo(env, v);
@@ -375,6 +377,7 @@ int main(int argc, char** argv)
         if (const char* st = std::getenv("MD_UI_BADGES")) mnm::plugin::md::text::romBadges().style.store(std::atoi(st));   // 0 framed, 1 bare, -1 the drawn logos
         if (const char* m = std::getenv("MD_UI_MACHINE"))   // track 1's machine for the snapshot (an MD machine ID)
             if (auto* pp = proc.apvts.getParameter(machineId(0))) { pp->setValueNotifyingHost(pp->convertTo0to1(float(machineIndexOf(std::atoi(m))))); proc.syncMachineSideEffects(); }
+        if (std::getenv("MD_UI_TONAL")) if (auto* pp = proc.apvts.getParameter(tonalId(0))) pp->setValueNotifyingHost(1.0f);   // dev: T1 TONAL
         std::unique_ptr<juce::AudioProcessorEditor> ed(proc.createEditor());
         if (auto* med = dynamic_cast<MdEditor*>(ed.get())) {
             med->refresh();

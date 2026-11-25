@@ -277,6 +277,11 @@ public:
     void devOpenMidi(int page = 0) { openMidiPanel(); m_midiPanel.setPage(page); }
     void devToggleScenes() { toggleScenes(); }
     void devSwapTrack(int dir) { swapTrack(dir); }
+    void devClone() { clonePattern(); }
+    void devInsert(int dir) { insertPattern(dir); }
+    void devStretch(bool twice) { stretchTrack(twice); }
+    void devToggleTonal() { toggleTonal(); }
+    static const char* const* devPitchNames(int m, int k) { return pitchNames(m, k); }
     void devOutTab(int tab) { m_out.setTabs({"OUT", "PTN", "XTR"}, tab, [this](int t) { bindOutPage(t); }); bindOutPage(tab); }
     int devTrack() const { return m_track; }
     void devOpenPool() { openPoolPanel(); m_poolPanel.select(2); }
@@ -423,6 +428,18 @@ private:
     MdPoolPanel m_poolPanel;
     void openPoolPanel();
     void swapTrack(int dir);
+    // CLONE PATTERN: the shown pattern into the next slot with a copy of the live kit in a free kit slot, and queued
+    void clonePattern();
+    // INSERT PATTERN: an empty slot opened beside the shown pattern (after: dir 1, before: -1), the patterns toward the
+    // nearest empty slot that way moved one on, the songs' rows following
+    void insertPattern(int dir);
+    // HALVE / DOUBLE: the selected track's trigs at half / twice their spacing (positions from step 1, micro-timing
+    // included; what lands past the length is dropped), its speed as it is
+    void stretchTrack(bool twice);
+    // TONAL (per track, as the community firmwares'): the pitch knobs show the note each value plays
+    static const char* const* pitchNames(int machine, int knob);
+    bool trackTonal(int t) const;
+    void toggleTonal();
     void bindXtraPage();   // TRACK SWAP: the selected track with its neighbour (sound, sequence, scenes); again: back
     juce::String poolSay(int v) const;   // "P5 KICK" (v = slot + 1)
     void wirePoolPanel();

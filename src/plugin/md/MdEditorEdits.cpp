@@ -237,6 +237,11 @@ bool MdEditor::keyPressed(const juce::KeyPress& k)
         const int f = code == 'A' || code == 'a' ? 0 : code == 'S' || code == 's' ? 1 : code == 'W' || code == 'w' ? 2 : -1;
         if (f >= 0) { togglePerTrack(f); return true; }
     }
+    if (m_gridOn && mods.isCtrlDown() && mods.isShiftDown() && !mods.isAltDown() && (k.getKeyCode() == juce::KeyPress::leftKey || k.getKeyCode() == juce::KeyPress::rightKey)) {
+        stretchTrack(k.getKeyCode() == juce::KeyPress::rightKey);   // HALVE (left) / DOUBLE (right) the track's spacing
+        return true;
+    }
+    if (mods.isCtrlDown() && mods.isShiftDown() && !mods.isAltDown() && (k.getKeyCode() == 'D' || k.getKeyCode() == 'd')) { clonePattern(); return true; }
     if (mods.isCtrlDown() && mods.isAltDown() && (k.getKeyCode() == juce::KeyPress::leftKey || k.getKeyCode() == juce::KeyPress::rightKey)) {
         swapTrack(k.getKeyCode() == juce::KeyPress::leftKey ? -1 : 1);   // TRACK SWAP (the EDIT KIT's FUNC + LEFT / RIGHT)
         return true;

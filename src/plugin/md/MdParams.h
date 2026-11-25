@@ -169,6 +169,7 @@ inline juce::String revId(int t) { return tp(t) + "rev"; }
 inline juce::String levelId(int t) { return tp(t) + "lev"; }
 inline juce::String routeId(int t) { return tp(t) + "out"; }
 inline juce::String muteId(int t) { return tp(t) + "mute"; }   // a muted track ignores its trigs
+inline juce::String tonalId(int t) { return tp(t) + "tonal"; }  // TONAL: the track's pitch knobs show notes
 // The kit's TRIG GROUP (a trig of this track trigs that one too) and MUTE GROUP (a trig of this track silences that one
 // until its own next trig): 0 = none, n = track n
 inline juce::String trigGroupId(int t) { return tp(t) + "tgrp"; }
@@ -254,6 +255,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         juce::StringArray routes;
         for (auto* r : kRouteNames) routes.add(r);
         g->addChild(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{routeId(t), 1}, pre + "OUT", routes, kNumRoutes - 1));
+        g->addChild(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{tonalId(t), 1}, pre + "TONAL", false));
         juce::StringArray tracks, lfoParams, types;
         for (int i = 0; i < kTracks; ++i) tracks.add("T" + juce::String(i + 1));
         for (auto* n : kLfoParamNames) lfoParams.add(n);

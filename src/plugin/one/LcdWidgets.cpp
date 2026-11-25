@@ -115,12 +115,65 @@ void KnobPage::mouseMove(const juce::MouseEvent& e)
     setMouseCursor(overTab ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
+namespace {
+struct PageClip { juce::String kind; std::array<int, 8> v{}; bool valid = false; };
+PageClip& pageClip() { static PageClip c; return c; }
+}
+
+// What a page's knobs are (their labels): a paste goes onto a page with the same knobs
+static juce::String pageKind(const std::array<spec::Param, 8>& params)
+{
+    juce::String s;
+    for (const auto& p : params) s << (p.label ? p.label : "") << "|";
+    return s;
+}
+
+bool KnobPage::canPaste() const { return pageClip().valid && pageClip().kind == pageKind(m_params); }
+
+void KnobPage::pageAction(int action)
+{
+    if (action == PagePaste && !canPaste()) return;
+    if (action != PageCopy && onPageAction) onPageAction(action);
+    auto& r = juce::Random::getSystemRandom();
+    if (action == PageCopy) {
+        auto& c = pageClip();
+        c.kind = pageKind(m_params);
+        for (int k = 0; k < 8; ++k) c.v[size_t(k)] = cellValue(k);
+        c.valid = true;
+        return;
+    }
+    for (int k = 0; k < 8; ++k) {
+        auto& cell = m_cells[size_t(k)];
+        const auto& p = m_params[size_t(k)];
+        if (!cell.isVisible() || p.display == spec::Display::Blank) continue;
+        const int hi = int(p.maxRaw), cur = cellValue(k);
+        int v = cur;
+        if (action == PagePaste) v = pageClip().v[size_t(k)];
+        else if (action == PageClear) v = int(p.defaultRaw);
+        else if (action == PageRandom) v = r.nextInt(hi + 1);
+        else if (action == PageNudge) { const int d = 4 + r.nextInt(5); v = cur + (r.nextBool() ? d : -d); }
+        v = juce::jlimit(0, hi, v);
+        if (v != cur) cell.setValue(double(v), juce::sendNotificationSync);
+    }
+    repaint();
+}
+
 void KnobPage::mouseDown(const juce::MouseEvent& e)
 {
     if (m_editing >= 0) {
         auto* c = e.eventComponent;
         if (c == &m_editor || m_editor.isParentOf(c)) return;
         endEdit(true);
+    }
+    if (pageActions && e.eventComponent == this && e.mods.isPopupMenu() && e.getPosition().y / kScale < overhangRows() + kTitleH) {   // the title bar: the page's menu
+        juce::PopupMenu m;
+        m.addItem(PageCopy, "Copy page");
+        m.addItem(PagePaste, "Paste page", canPaste());
+        m.addItem(PageClear, "Clear page (defaults)");
+        m.addItem(PageRandom, "Randomise page");
+        m.addItem(PageNudge, "Nudge page (each knob 4-8 steps)");
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this), [this](int a) { if (a > 0) pageAction(a); });
+        return;
     }
     if (e.eventComponent == this && !m_tabs.isEmpty()) {   // a press on the title bar switches tabs
         const auto lcd = e.getPosition() / kScale;

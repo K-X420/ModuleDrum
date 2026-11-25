@@ -82,6 +82,14 @@ public:
     // the cells' tooltips: (cell, its label) -> text, applied when the page is bound
     std::function<juce::String(int k, const juce::String& label)> tipFor;
     void devReset(int k) { auto& c = m_cells[size_t(k)]; if (c.onReset) c.onReset(); }                  // dev/tests: a double-click
+    // PAGE ACTIONS (a right-click on the title bar): the page's eight knobs copied, pasted onto a page with the same
+    // knobs, set to their defaults, randomised, or each nudged 4-8 steps. Through the cells, so a held step or scene
+    // takes them as locks. onPageAction (if set) is told first (the editor keeps an undo); pageActions off: no menu.
+    enum PageAction { PageCopy = 1, PagePaste, PageClear, PageRandom, PageNudge };
+    void pageAction(int action);
+    bool canPaste() const;
+    std::function<void(int action)> onPageAction;
+    bool pageActions = false;
     bool devMarked(int k) const { return m_custom && m_marked && m_marked(k); }
     void paint(juce::Graphics&) override;
     void resized() override;

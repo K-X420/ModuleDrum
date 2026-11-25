@@ -1,5 +1,7 @@
 // ModuleDrum's editor: building the panels, the knob pages, the timer, the layout
 #include "MdEditorInternal.h"
+#include "MdPitchTable.h"
+#include <map>
 #include <cmath>
 #include "ShnolkLogo.h"
 #include "SharedSettings.h"
@@ -94,6 +96,10 @@ MdEditor::MdEditor(MdProcessor& p)
     wireMixer();
     addChildComponent(m_samplePanel);
     addChildComponent(m_poolPanel);
+    for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master}) {   // PAGE ACTIONS: a right-click on the title (Ctrl+Alt+Z: back)
+        pg->pageActions = true;
+        pg->onPageAction = [this](int) { m_kitUndo = {true, m_proc.captureMdKit(), m_proc.loadedKitKey(), m_proc.kitName()}; };
+    }
     wireSamplePanel(); wirePoolPanel();
     addChildComponent(m_midiPanel);
     wireMidiPanel();
@@ -371,6 +377,130 @@ void MdEditor::swapTrack(int dir)
     flash("T" + juce::String(a + 1) + " <> T" + juce::String(b + 1) + (patterns > 1 ? " (" + juce::String(patterns) + " PTNS)" : juce::String()));
 }
 
+// TONAL's names of a pitch knob (MdPitchTable.h: the Hz each value plays): the nearest quarter tone, as Ableton names
+// notes (60 = C3), "+" a quarter tone up. Null: the knob was not measured as pitched.
+const char* const* MdEditor::pitchNames(int machine, int knob)
+{
+    static const auto tables = [] {
+        std::map<std::pair<int, int>, std::pair<std::array<std::string, 128>, std::array<const char*, 128>>> t;
+        static const char* const notes[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        for (const auto& pt : kPitchTables) {
+            auto& e = t[{pt.machine, pt.knob}];
+            for (int v = 0; v < 128; ++v) {
+                const double midi = 69.0 + 12.0 * std::log2(double(pt.hz[v]) / 440.0);
+                const int q = int(std::lround(midi * 2.0));   // quarter tones
+                const int n = juce::jlimit(0, 127, q / 2);
+                e.first[size_t(v)] = std::string(notes[n % 12]) + std::to_string(n / 12 - 2) + (q % 2 ? "+" : "");
+            }
+            for (int v = 0; v < 128; ++v) e.second[size_t(v)] = e.first[size_t(v)].c_str();
+        }
+        return t;
+    }();
+    const auto it = tables.find({machine, knob});
+    return it != tables.end() ? it->second.second.data() : nullptr;
+}
+
+bool MdEditor::trackTonal(int t) const { return m_proc.apvts.getRawParameterValue(tonalId(t))->load() >= 0.5f; }
+
+void MdEditor::toggleTonal()
+{
+    const bool on = !trackTonal(m_track);
+    if (auto* a = m_proc.apvts.getParameter(tonalId(m_track))) a->setValueNotifyingHost(on ? 1.0f : 0.0f);
+    bool any = false;
+    for (int k = 0; k < 8; ++k) any = any || pitchNames(m_proc.machineIdOf(m_track), k) != nullptr;
+    m_shownMachineId = -2;
+    rebuildSynPage();
+    flash(on ? (any ? "TONAL ON" : "TONAL: NO PITCH KNOB") : juce::String("TONAL OFF"));
+}
+
+void MdEditor::clonePattern()
+{
+    const int src = editSlot(), dst = (src + 1) % 128;
+    const auto p = m_proc.bankPattern(src);
+    if (!p) { flash("EMPTY PATTERN"); return; }
+    // the kit slot: an empty one, else one no pattern uses
+    int kit = -1;
+    for (int k = 0; k < 64 && kit < 0; ++k) if (!m_proc.bankHasKit(k)) kit = k;
+    if (kit < 0) {
+        std::array<bool, 64> used{};
+        for (int s = 0; s < 128; ++s) if (const auto q = m_proc.bankPattern(s)) used[size_t(q->kit & 63)] = true;
+        for (int k = 0; k < 64 && kit < 0; ++k) if (!used[size_t(k)]) kit = k;
+    }
+    if (kit >= 0) {
+        auto k = m_proc.captureMdKit();
+        juce::String name(k.name);   // KIT026 -> KIT027, TEST -> TEST2
+        int end = name.length();
+        while (end > 0 && juce::CharacterFunctions::isDigit(name[end - 1])) --end;
+        name = end < name.length() ? name.substring(0, end) + juce::String(name.substring(end).getIntValue() + 1) : name + "2";
+        if (name.length() > 16) name = name.substring(0, 15) + "2";
+        std::memset(k.nameRaw, 0, sizeof(k.nameRaw));
+        std::memcpy(k.nameRaw, name.toRawUTF8(), size_t(juce::jmin(16, name.length())));
+        k.name = name.toStdString();
+        m_proc.setBankKit(kit, k);
+    }
+    auto copy = *p;
+    copy.position = dst;
+    if (kit >= 0) copy.kit = uint8_t(kit);
+    m_undo.push_back({dst, m_proc.bankPattern(dst), std::make_shared<const mnm::mddump::Pattern>(copy), "clone pattern"});
+    m_redo.clear(); m_lastCoalesce = -1;
+    m_proc.setBankPattern(dst, std::make_shared<const mnm::mddump::Pattern>(copy));
+    if (auto* a = m_proc.apvts.getParameter(patternId())) a->setValueNotifyingHost(a->convertTo0to1(float(dst)));   // queued (or at once, stopped)
+    flash("CLONED > " + juce::String(mnm::mddump::patternSlotName(dst)) + (kit >= 0 ? " KIT " + juce::String(kit + 1).paddedLeft('0', 2) : juce::String()));
+    refreshGrid();
+}
+
+void MdEditor::insertPattern(int dir)
+{
+    const int cur = editSlot();
+    int gap = -1;
+    for (int s = cur + dir; s >= 0 && s < 128; s += dir) if (!m_proc.bankHasPattern(s)) { gap = s; break; }
+    if (gap < 0) { flash("NO EMPTY SLOT"); return; }
+    // the patterns between the gap and the shown one move one toward the gap (the shown one stays)
+    auto moved = [&](int s) { return dir > 0 ? (s > cur && s < gap) : (s < cur && s > gap); };
+    for (int s = gap - dir; moved(s); s -= dir) {
+        auto p = m_proc.bankPattern(s);
+        if (p) { auto q = *p; q.position = s + dir; m_proc.setBankPattern(s + dir, std::make_shared<const mnm::mddump::Pattern>(q)); }
+        else m_proc.setBankPattern(s + dir, nullptr);
+    }
+    m_proc.setBankPattern(cur + dir, nullptr);
+    for (int i = 0; i < 32; ++i) {   // the songs' rows go with their patterns
+        if (!m_proc.bankSong(i)) continue;
+        m_proc.editSong(i, [&](mnm::mddump::Song& song) {
+            for (auto& r : song.rows) if (r.bytes[0] < 128 && (moved(r.bytes[0]) || r.bytes[0] == cur + dir)) r.bytes[0] = uint8_t(r.bytes[0] + dir);
+        });
+    }
+    m_undo.clear(); m_redo.clear();
+    flash("INSERTED " + juce::String(mnm::mddump::patternSlotName(cur + dir)));
+    refreshGrid();
+}
+
+void MdEditor::stretchTrack(bool twice)
+{
+    const int t = m_track, slot = editSlot();
+    const auto p = m_proc.bankPattern(slot);
+    if (!p || !(p->trigs[t] | p->lockTrigs[t])) { flash("NO TRIGS"); return; }
+    doEdit(slot, twice ? "double spacing" : "halve spacing", [&](mnm::mddump::Pattern& x) {
+        const auto old = x;
+        const int len = juce::jlimit(1, 64, x.trackLen[t] > 0 ? int(x.trackLen[t]) : int(x.length));
+        x.clearSteps(0, 64, t);
+        x.lockTrigs[t] = 0;
+        std::array<bool, 64> taken{};
+        for (int s = 0; s < 64; ++s) {
+            if (!(((old.trigs[t] | old.lockTrigs[t]) >> s) & 1)) continue;
+            const int pos = s * 24 + int(old.micro[t][s]);   // in 24ths of a step
+            const int np = twice ? pos * 2 : (pos >= 0 ? pos / 2 : -((-pos + 1) / 2));
+            const int ns = int(std::floor(double(np) / 24.0 + 0.5));
+            if (ns < 0 || ns >= len || taken[size_t(ns)]) continue;   // past the end, or a trig there already
+            taken[size_t(ns)] = true;
+            x.copySteps(old, s, ns, 1, t, t);
+            if ((old.lockTrigs[t] >> s) & 1) x.lockTrigs[t] |= 1ull << ns;
+            x.micro[t][ns] = int8_t(juce::jlimit(-23, 23, np - ns * 24));
+        }
+    });
+    flash(twice ? "DOUBLED" : "HALVED");
+    refreshGrid();
+}
+
 void MdEditor::setTooltipsOn(bool on)
 {
     if (on && !m_tips) m_tips = std::make_unique<juce::TooltipWindow>(this, 700);
@@ -546,6 +676,8 @@ void MdEditor::rebuildSynPage()
     int shown = id;   // CTR-8P: its knob labels also follow the TRK / PAR assignments
     if (id == kCtr8p)
         for (int p = 8; p < 24; ++p) shown = (shown * 131 + int(std::lround(m_proc.apvts.getRawParameterValue(trackParamId(m_track, p))->load()))) & 0x7FFFFF;
+    const bool tonal = m_proc.apvts.getRawParameterValue(tonalId(m_track))->load() >= 0.5f;
+    if (tonal) shown ^= 0x400000;   // (TONAL shows another page)
     if (shown == m_shownMachineId) return;
     m_shownMachineId = shown;
     const auto* m = m_proc.machineInfo(id);
@@ -554,6 +686,10 @@ void MdEditor::rebuildSynPage()
         auto& p = m_synParams[size_t(k)];
         p = m_synLabels[size_t(k)].empty() ? blank() : numeric("", m ? m->defaults[size_t(k)] : 0);
         p.label = m_synLabels[size_t(k)].c_str();
+    }
+    if (tonal) {   // TONAL: a pitch knob the plugin has measured shows the note each value plays (+ a quarter tone up)
+        for (int k = 0; k < 8; ++k)
+            if (const auto* names = pitchNames(id, k)) m_synParams[size_t(k)] = readout(m_synParams[size_t(k)].label, names, 128, m_synParams[size_t(k)].defaultRaw);
     }
     if (isMidMachine(id)) {   // NOTE as a note, N2 N3 PB centred
         m_synParams[0] = named(m_synParams[0].label, 0, 64);
@@ -696,6 +832,10 @@ void MdEditor::showMenu()
     m.addItem(22, "CLEAR T" + juce::String(m_track + 1) + " MACHINE  (CTRL+SHIFT+DEL)");
     m.addItem(25, "SWAP T" + juce::String(m_track + 1) + " WITH T" + juce::String((m_track + 15) % 16 + 1) + "  (CTRL+ALT+LEFT)");
     m.addItem(26, "SWAP T" + juce::String(m_track + 1) + " WITH T" + juce::String((m_track + 1) % 16 + 1) + "  (CTRL+ALT+RIGHT)");
+    m.addItem(30, "TONAL T" + juce::String(m_track + 1) + " (PITCH AS NOTES)", true, trackTonal(m_track));
+    m.addItem(27, "CLONE PATTERN TO " + juce::String(mnm::mddump::patternSlotName((editSlot() + 1) % 128)) + "  (CTRL+SHIFT+D)");
+    m.addItem(28, "INSERT EMPTY PATTERN BEFORE");
+    m.addItem(29, "INSERT EMPTY PATTERN AFTER");
     m.addItem(11, "MIDI SETTINGS...");
     m.addItem(23, "SAMPLES...");
     m.addItem(24, "SOUND POOL...");
@@ -719,6 +859,9 @@ void MdEditor::showMenu()
         if (r == 23) { openSamplePanel(); return; }
         if (r == 24) { openPoolPanel(); return; }
         if (r == 25 || r == 26) { swapTrack(r == 25 ? -1 : 1); return; }
+        if (r == 27) { clonePattern(); return; }
+        if (r == 30) { toggleTonal(); return; }
+        if (r == 28 || r == 29) { insertPattern(r == 28 ? -1 : 1); return; }
         if (r == 16) { toggleMixer(); return; }
         if (r == 18) { undoKit(); return; }
         if (r == 19) { reloadKit(); return; }

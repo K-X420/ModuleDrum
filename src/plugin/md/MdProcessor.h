@@ -231,6 +231,8 @@ public:
     // Songs (message thread), as the patterns: a copy (null: none), an edit of a copy (an empty slot starts with no
     // rows), and putting one back (undo / redo). A playing song takes an edit from its next row on.
     std::shared_ptr<const mnm::mddump::Song> bankSong(int slot) const;
+    bool bankHasKit(int slot) const;
+    void setBankKit(int slot, const mnm::mddump::Kit& kit);   // a kit into the bank (CLONE PATTERN's copy of the live kit)
     void editSong(int slot, const std::function<void(mnm::mddump::Song&)>& fn);
     void setBankSong(int slot, std::shared_ptr<const mnm::mddump::Song> s);
     int seqStep() const { return m_seqStepUi.load(); }        // the playing step, -1 when not playing
