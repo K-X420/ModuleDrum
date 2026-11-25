@@ -73,6 +73,10 @@ struct Pattern {
     //               fade in (63: from silence); 0 all at the trig's level
     //   lockTrigs   trigless locks (bit = step): the step's locks are set there without a trig (never with a trig)
     //   soundLock   a sound lock: 0 none, else the sound pool slot + 1 the trig plays on its track (SetData::pool)
+    //   condMode    what a trig's condition decides (kCondBoth / kCondTrigOnly / kCondLocksOnly)
+    // Per track: trackCond, the condition of its trigs that have none of their own (kCondAlways: a trig that opts
+    // out). Per pattern: WRAP AFTER (wrapAfter: when every track starts over together) and CHAIN AFTER (chainAfter: when
+    // a queued pattern takes over), coded as wrapName / chainName.
     // Per track: its own length and speed (trackSpeedName), and its Euclidean generators (Euclid, for GENERATE).
     // encodePattern leaves them out; they travel in a message of their own (encodePatternExtras). copySteps and
     // clearSteps take them with the trig; a trig taken off clears its own (clearStepExtras).
@@ -81,6 +85,9 @@ struct Pattern {
     uint8_t retrig[kTracks][64] = {};
     int8_t retrigFade[kTracks][64] = {};
     uint8_t soundLock[kTracks][64] = {};
+    uint8_t condMode[kTracks][64] = {};
+    uint8_t trackCond[kTracks] = {};
+    uint16_t wrapAfter = 0, chainAfter = 0;
     uint64_t lockTrigs[kTracks] = {};
     uint8_t trackLen[kTracks] = {};     // a track's own length in steps (it loops there); 0 = the pattern's
     uint8_t trackSpeed[kTracks] = {};   // 0 the pattern's speed, else kTrackSpeeds - 1 (2X 3/2X 3/4X 1/2X 1/4X 1/8X of it)
@@ -93,16 +100,30 @@ struct Pattern {
     Euclid euclid[kTracks] = {};
     bool hasExtras() const;
     bool hasNewExtras() const;   // any of the second set (fade, trigless locks, speeds, generators): a version 2 message
-    bool hasSoundLocks() const;  // any sound lock: a version 3 message
+    bool hasSoundLocks() const;  // any sound lock
+    bool hasThirdExtras() const; // any of the third set (sound locks, condition targets, track conditions, WRAP / CHAIN): version 3
+    // Swaps two tracks' steps: trigs, marks, locks and every extra (a track swap moves its sequence with its sound)
+    void swapTracks(int a, int b);
     void clearStepExtras(int track, int step);
 };
 
 // Trig conditions (as Elektron's later machines): 0 none; 1-21 a probability; FILL, !FILL, PRE, !PRE (the track's
 // last conditional trig played / didn't), NEI, !NEI (the same of the track before), 1ST, !1ST (the first pass); then
 // A:B, the A-th pass of every B (1:2 .. 8:8)
-constexpr int kConditions = 65;
+constexpr int kConditions = 66;   // 65 = kCondAlways
 enum : uint8_t { kCondFill = 22, kCondNotFill, kCondPre, kCondNotPre, kCondNei, kCondNotNei, kCondFirst, kCondNotFirst, kCondRatio };
 std::string conditionName(int cond);               // "" for none
+constexpr int kCondAlways = 65;                    // a trig that plays always, whatever its track's condition
+// What a trig's condition decides: BOTH its sound and its locks (as before); TRIG, only its sound (a trig that does
+// not play still sets its locks, as Elektron's xP); LOCKS, only its locks (the sound always plays)
+enum : uint8_t { kCondBoth = 0, kCondTrigOnly = 1, kCondLocksOnly = 2 };
+const char* condModeName(int mode);                // "BOTH" "TRIG" "LOCKS"
+// WRAP AFTER: 0 OFF (tracks loop on their own), 1 LONGEST, 2 SHORTEST (the longest / shortest track's loop, speed
+// included), n >= 3 every n - 1 pattern steps (2..1024). CHAIN AFTER: 0 the pattern's length (the MD), 1 LONGEST,
+// 2 SHORTEST, n >= 3 every n - 1 steps.
+constexpr int kWrapLongest = 1, kWrapShortest = 2;
+std::string wrapName(int v);
+std::string chainName(int v);
 int conditionPercent(int cond);                    // a probability's percent, else -1
 bool conditionRatio(int cond, int& a, int& b);     // an A:B condition's A and B
 // Retrigs: the hits a step (rate 1..7: 2 3 4 6 8 12 16, i.e. 1/32 .. 1/256) and the steps they last (1..8)

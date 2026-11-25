@@ -140,6 +140,50 @@ mnm::mddump::Kit MdProcessor::captureMdKit() const
     return k;
 }
 
+void MdProcessor::swapTrackSounds(int a, int b)
+{
+    if (a == b || a < 0 || b < 0 || a >= kTracks || b >= kTracks) return;
+    auto k = captureMdKit();
+    auto other = [a, b](uint8_t v) { return v == a ? uint8_t(b) : v == b ? uint8_t(a) : v; };   // a track number (>= 16: none)
+    std::swap(k.models[a], k.models[b]);
+    std::swap(k.levels[a], k.levels[b]);
+    for (int i = 0; i < 24; ++i) std::swap(k.params[a][i], k.params[b][i]);
+    for (int i = 0; i < 36; ++i) std::swap(k.lfos[a][i], k.lfos[b][i]);
+    std::swap(k.trigGroups[a], k.trigGroups[b]);
+    std::swap(k.muteGroups[a], k.muteGroups[b]);
+    for (int t = 0; t < kTracks; ++t) {
+        k.lfos[t][0] = other(k.lfos[t][0]);
+        k.trigGroups[t] = other(k.trigGroups[t]);
+        k.muteGroups[t] = other(k.muteGroups[t]);
+    }
+    auto swapParam = [this](const juce::String& x, const juce::String& y) {
+        auto* p = apvts.getParameter(x); auto* q = apvts.getParameter(y);
+        if (!p || !q) return;
+        const float pv = p->getValue(), qv = q->getValue();
+        p->setValueNotifyingHost(qv); q->setValueNotifyingHost(pv);
+    };
+    swapParam(routeId(a), routeId(b));
+    swapParam(muteId(a), muteId(b));
+    const auto sa = m_sounds[size_t(a)], sb = m_sounds[size_t(b)];
+    const bool la = m_locked[size_t(a)].load(), lb = m_locked[size_t(b)].load();
+    m_locked[size_t(a)].store(false); m_locked[size_t(b)].store(false);   // (so the load reaches both)
+    std::array<bool, kTracks> keep{};
+    for (int t = 0; t < kTracks; ++t) { keep[size_t(t)] = m_locked[size_t(t)].load(); m_locked[size_t(t)].store(false); }   // every track takes the swapped kit
+    const auto key = m_kitKey, name = m_kitName;
+    const auto lfoA = m_kitLfos[size_t(a)], lfoB = m_kitLfos[size_t(b)];
+    loadMdKit(key, k, name);
+    for (int t = 0; t < kTracks; ++t) m_locked[size_t(t)].store(keep[size_t(t)]);
+    m_locked[size_t(a)].store(lb); m_locked[size_t(b)].store(la);
+    m_sounds[size_t(a)] = sb; m_sounds[size_t(b)] = sa;
+    juce::ignoreUnused(lfoA, lfoB);
+    for (int s = 0; s < kScenes; ++s)
+        for (int p = 0; p < 24; ++p) {
+            const int i = sceneSlotOf(a, p), j = sceneSlotOf(b, p);
+            const int vi = sceneValue(s, i), vj = sceneValue(s, j);
+            setSceneValue(s, i, vj); setSceneValue(s, j, vi);
+        }
+}
+
 int MdProcessor::loadMdKit(const juce::String& key, const mnm::mddump::Kit& kit, const juce::String& name)
 {
     m_baseKit = kit;

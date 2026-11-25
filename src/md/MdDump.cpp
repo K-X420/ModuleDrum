@@ -1,5 +1,6 @@
 #include "MdDump.h"
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 namespace mnm::mddump {
@@ -173,7 +174,7 @@ bool Pattern::hasExtras() const
     for (int t = 0; t < kTracks; ++t)
         for (int s = 0; s < 64; ++s) if (cond[t][s] || micro[t][s] || retrig[t][s]) return true;
     for (int t = 0; t < kTracks; ++t) if (trackLen[t]) return true;
-    return hasNewExtras() || hasSoundLocks();
+    return hasNewExtras() || hasThirdExtras();
 }
 
 bool Pattern::hasNewExtras() const
@@ -192,10 +193,66 @@ bool Pattern::hasSoundLocks() const
     return false;
 }
 
+bool Pattern::hasThirdExtras() const
+{
+    if (wrapAfter || chainAfter || hasSoundLocks()) return true;
+    for (int t = 0; t < kTracks; ++t) {
+        if (trackCond[t]) return true;
+        for (int s = 0; s < 64; ++s) if (condMode[t][s]) return true;
+    }
+    return false;
+}
+
+void Pattern::swapTracks(int a, int b)
+{
+    if (a == b || a < 0 || b < 0 || a >= kTracks || b >= kTracks) return;
+    // the locks: taken off both tracks, then put back on the other one (the rows keep their track order)
+    std::vector<std::array<int, 3>> la, lb;   // param, step, value
+    for (int q = 0; q < 24; ++q)
+        for (int s = 0; s < 64; ++s) {
+            if (const int r = lockRow(a, q); r >= 0 && locks[r][s] <= 127) la.push_back({q, s, locks[r][s]});
+            if (const int r = lockRow(b, q); r >= 0 && locks[r][s] <= 127) lb.push_back({q, s, locks[r][s]});
+        }
+    for (int q = 0; q < 24; ++q)
+        for (int s = 0; s < 64; ++s) { clearLock(a, q, s); clearLock(b, q, s); }
+    for (const auto& l : la) setLock(b, l[0], l[1], l[2]);
+    for (const auto& l : lb) setLock(a, l[0], l[1], l[2]);
+    std::swap(trigs[a], trigs[b]);
+    std::swap(accentPerTrack[a], accentPerTrack[b]); std::swap(slidePerTrack[a], slidePerTrack[b]); std::swap(swingPerTrack[a], swingPerTrack[b]);
+    auto swapRow = [&](auto& arr) { for (int s = 0; s < 64; ++s) std::swap(arr[a][s], arr[b][s]); };
+    swapRow(cond); swapRow(micro); swapRow(retrig); swapRow(retrigFade); swapRow(soundLock); swapRow(condMode);
+    std::swap(lockTrigs[a], lockTrigs[b]);
+    std::swap(trackLen[a], trackLen[b]); std::swap(trackSpeed[a], trackSpeed[b]);
+    std::swap(euclid[a], euclid[b]); std::swap(trackCond[a], trackCond[b]);
+}
+
+const char* condModeName(int mode)
+{
+    static const char* const n[3] = {"BOTH", "TRIG", "LOCKS"};
+    return n[mode >= 0 && mode < 3 ? mode : 0];
+}
+
+std::string wrapName(int v)
+{
+    if (v == 0) return "OFF";
+    if (v == kWrapLongest) return "LONG";
+    if (v == kWrapShortest) return "SHORT";
+    return std::to_string(v - 1);
+}
+
+std::string chainName(int v)
+{
+    if (v == 0) return "PTN";
+    if (v == kWrapLongest) return "LONG";
+    if (v == kWrapShortest) return "SHORT";
+    return std::to_string(v - 1);
+}
+
 void Pattern::clearStepExtras(int track, int step)
 {
     if (track < 0 || track >= kTracks || step < 0 || step >= 64) return;
     cond[track][step] = 0; micro[track][step] = 0; retrig[track][step] = 0; retrigFade[track][step] = 0; soundLock[track][step] = 0;
+    condMode[track][step] = 0;
 }
 
 namespace {
@@ -206,7 +263,7 @@ int conditionPercent(int c) { return c >= 1 && c <= 21 ? kProbabilities[c - 1] :
 
 bool conditionRatio(int c, int& a, int& b)
 {
-    if (c < kCondRatio || c >= kConditions) return false;
+    if (c < kCondRatio || c >= kCondAlways) return false;
     int i = c - kCondRatio;
     for (b = 2; b <= 8; ++b) { if (i < b) { a = i + 1; return true; } i -= b; }
     return false;
@@ -215,6 +272,7 @@ bool conditionRatio(int c, int& a, int& b)
 std::string conditionName(int c)
 {
     static const char* const named[8] = {"FILL", "!FILL", "PRE", "!PRE", "NEI", "!NEI", "1ST", "!1ST"};
+    if (c == kCondAlways) return "ALWAYS";
     if (const int p = conditionPercent(c); p > 0) return std::to_string(p) + "%";
     if (c >= kCondFill && c < kCondRatio) return named[c - kCondFill];
     int a = 0, b = 0;
@@ -307,6 +365,7 @@ void Pattern::copySteps(const Pattern& src, int from, int to, int count, int tra
             cond[dt][d] = src.cond[t][s]; micro[dt][d] = src.micro[t][s]; retrig[dt][d] = src.retrig[t][s];
             retrigFade[dt][d] = src.retrigFade[t][s];
             soundLock[dt][d] = src.soundLock[t][s];
+            condMode[dt][d] = src.condMode[t][s];
             setBit(lockTrigs[dt], d, getBit(src.lockTrigs[t], s));
         }
     }
@@ -550,13 +609,14 @@ bool isPatternExtras(const uint8_t* m, size_t n)
 
 // Entries after the head: version 1, five bytes (track, step, condition, micro + 64, retrig; track 0x40 | t: its
 // length); version 2, seven (the same then fade + 64 and flags, bit 0 a trigless lock; 0x40 | t: length, speed;
-// version 3, eight: version 2's then the sound lock (0 none, else pool slot + 1), written only with a sound lock;
+// version 3, eight: version 2's then the sound lock (0 none, else pool slot + 1), flags bits 1-2 the condition target,
+// 0x50 | t: the track's condition, 0x70: WRAP AFTER and CHAIN AFTER (7-bit high, low each); written only with any of these;
 // 0x60 | t: the generators' pulses 1 and 2, rotations 1 and 2, op). Version 1 is written while only its fields are
 // used, so plugins before 1.4 still read the extras of such patterns.
 std::vector<uint8_t> encodePatternExtras(const Pattern& p)
 {
     std::vector<uint8_t> out;
-    const bool v3 = p.hasSoundLocks(), v2 = v3 || p.hasNewExtras();
+    const bool v3 = p.hasThirdExtras(), v2 = v3 || p.hasNewExtras();
     const std::vector<uint8_t> head = {0xF0, 0x7D, 'M', 'N', 'X', uint8_t(v3 ? 3 : v2 ? 2 : 1), uint8_t(p.position & 0x7F)};
     auto put = [&](std::initializer_list<uint8_t> e) {
         if (out.empty()) out = head;
@@ -564,15 +624,19 @@ std::vector<uint8_t> encodePatternExtras(const Pattern& p)
     };
     for (int t = 0; t < kTracks; ++t)
         if (p.trackLen[t] || p.trackSpeed[t]) put({uint8_t(0x40 | t), uint8_t(p.trackLen[t] & 0x7F), uint8_t(p.trackSpeed[t] % kTrackSpeeds), 64, 0, 64, 0, 0});
+    if (p.wrapAfter || p.chainAfter)
+        put({0x70, uint8_t((p.wrapAfter >> 7) & 0x7F), uint8_t(p.wrapAfter & 0x7F), uint8_t((p.chainAfter >> 7) & 0x7F), uint8_t(p.chainAfter & 0x7F), 0, 0, 0});
+    for (int t = 0; t < kTracks; ++t)
+        if (p.trackCond[t]) put({uint8_t(0x50 | t), uint8_t(p.trackCond[t] & 0x7F), 0, 64, 0, 64, 0, 0});
     for (int t = 0; t < kTracks; ++t)
         if (const auto& e = p.euclid[t]; e.pulses1)
             put({uint8_t(0x60 | t), uint8_t(e.pulses1 & 0x7F), uint8_t(e.pulses2 & 0x7F), uint8_t(e.rot1 & 0x3F), uint8_t(e.rot2 & 0x3F), uint8_t(e.op & 3), 0, 0});
     for (int t = 0; t < kTracks; ++t)
         for (int s = 0; s < 64; ++s) {
             const bool lockTrig = (p.lockTrigs[t] >> s) & 1;
-            if (p.cond[t][s] || p.micro[t][s] || p.retrig[t][s] || p.retrigFade[t][s] || lockTrig || p.soundLock[t][s]) {
+            if (p.cond[t][s] || p.micro[t][s] || p.retrig[t][s] || p.retrigFade[t][s] || lockTrig || p.soundLock[t][s] || p.condMode[t][s]) {
                 const int m = std::clamp(int(p.micro[t][s]), -23, 23) + 64, f = std::clamp(int(p.retrigFade[t][s]), -63, 63) + 64;
-                put({uint8_t(t), uint8_t(s), uint8_t(p.cond[t][s] & 0x7F), uint8_t(m), uint8_t(p.retrig[t][s] & 0x7F), uint8_t(f), uint8_t(lockTrig ? 1 : 0),
+                put({uint8_t(t), uint8_t(s), uint8_t(p.cond[t][s] & 0x7F), uint8_t(m), uint8_t(p.retrig[t][s] & 0x7F), uint8_t(f), uint8_t((lockTrig ? 1 : 0) | ((p.condMode[t][s] & 3) << 1)),
                      uint8_t(std::min<int>(p.soundLock[t][s], kPoolSlots))});
             }
         }
@@ -591,11 +655,21 @@ bool decodePatternExtras(const uint8_t* m, size_t n, int& position, Pattern& p)
     std::memset(p.trackSpeed, 0, sizeof(p.trackSpeed));
     std::memset(p.lockTrigs, 0, sizeof(p.lockTrigs));
     for (auto& e : p.euclid) e = {};
+    std::memset(p.trackCond, 0, sizeof(p.trackCond));
+    p.wrapAfter = p.chainAfter = 0;
     for (size_t i = 7; i + w <= n - 1; i += w) {
         const int t = m[i], s = m[i + 1];
         if (t >= 0x40 && t < 0x40 + kTracks) {
             p.trackLen[t - 0x40] = uint8_t(s <= 64 ? s : 0);
             if (w >= 7) p.trackSpeed[t - 0x40] = uint8_t(m[i + 2] < kTrackSpeeds ? m[i + 2] : 0);
+            continue;
+        }
+        if (t == 0x70) {
+            if (w == 8) { p.wrapAfter = uint16_t(std::min(1025, (m[i + 1] << 7) | m[i + 2])); p.chainAfter = uint16_t(std::min(1025, (m[i + 3] << 7) | m[i + 4])); }
+            continue;
+        }
+        if (t >= 0x50 && t < 0x50 + kTracks) {
+            if (w == 8) p.trackCond[t - 0x50] = uint8_t(m[i + 1] < kConditions && m[i + 1] != kCondAlways ? m[i + 1] : 0);
             continue;
         }
         if (t >= 0x60 && t < 0x60 + kTracks) {
@@ -610,7 +684,10 @@ bool decodePatternExtras(const uint8_t* m, size_t n, int& position, Pattern& p)
             p.retrigFade[t][s] = int8_t(std::clamp(int(m[i + 5]) - 64, -63, 63));
             if ((m[i + 6] & 1) && !((p.trigs[t] >> s) & 1)) p.lockTrigs[t] |= 1ull << s;
         }
-        if (w == 8) p.soundLock[t][s] = uint8_t(m[i + 7] <= kPoolSlots ? m[i + 7] : 0);
+        if (w == 8) {
+            p.soundLock[t][s] = uint8_t(m[i + 7] <= kPoolSlots ? m[i + 7] : 0);
+            p.condMode[t][s] = uint8_t(std::min(2, (m[i + 6] >> 1) & 3));
+        }
     }
     return true;
 }
@@ -679,6 +756,9 @@ Dump parseDump(const uint8_t* data, size_t size, const std::string& filename)
                 std::memcpy(it->retrigFade, probe.retrigFade, sizeof(probe.retrigFade));
                 std::memcpy(it->trackSpeed, probe.trackSpeed, sizeof(probe.trackSpeed));
                 std::memcpy(it->soundLock, probe.soundLock, sizeof(probe.soundLock));
+                std::memcpy(it->condMode, probe.condMode, sizeof(probe.condMode));
+                std::memcpy(it->trackCond, probe.trackCond, sizeof(probe.trackCond));
+                it->wrapAfter = probe.wrapAfter; it->chainAfter = probe.chainAfter;
                 for (int t = 0; t < kTracks; ++t) { it->lockTrigs[t] = probe.lockTrigs[t] & ~it->trigs[t]; it->euclid[t] = probe.euclid[t]; }
                 break;
             }

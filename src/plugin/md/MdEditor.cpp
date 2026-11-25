@@ -63,7 +63,7 @@ MdEditor::MdEditor(MdProcessor& p)
     for (auto* pg : {&m_syn, &m_fx, &m_routing, &m_lfo, &m_master, &m_out}) addAndMakeVisible(pg);
     m_master.setTabs({kMasterTabs[0], kMasterTabs[1], kMasterTabs[2], kMasterTabs[3]}, 0, [this](int tab) { bindMasterFx(tab); });
     for (int s = 0; s < 128; ++s) { m_ptnNames[size_t(s)] = kPatternNames[s]; m_ptnNamePtrs[size_t(s)] = m_ptnNames[size_t(s)].c_str(); }
-    m_out.setTabs({"OUT", "PTN"}, 0, [this](int tab) { bindOutPage(tab); });
+    m_out.setTabs({"OUT", "PTN", "XTR"}, 0, [this](int tab) { bindOutPage(tab); });
     bindOutPage(0);
     wireKeys();
     wireAltTurn();
@@ -241,6 +241,7 @@ void MdEditor::bindOutPage(int tab)
         for (int i = 0; i < 31; ++i) { n.swing[size_t(i)] = std::to_string(50 + i) + "%"; n.swingP[size_t(i)] = n.swing[size_t(i)].c_str(); }
         return n;
     }();
+    if (tab == 2) { bindXtraPage(); return; }
     static const char* const kSpd[8] = {"1X", "2X", "3/4X", "3/2X", "1/2X", "1/4X", "1/8X", "3X"};   // 4-7: the plugin's extras
     static const char* const kPages[4] = {"1", "2", "3", "4"};
     static const char* const kChange[4] = {"SEQ", "START", "JUMP", "TEMP"};   // PATTERN CHANGE (GRID: its button, or G)
@@ -287,6 +288,87 @@ void MdEditor::bindOutPage(int tab)
             });
             refreshGrid();
         });
+}
+
+// The OUT panel's XTR tab (the extras that belong to the pattern and the selected track): WRAP AFTER, CHAIN AFTER, and
+// the track's own condition (TCND) for its trigs without one
+void MdEditor::bindXtraPage()
+{
+    namespace dd = mnm::mddump;
+    static const auto lists = [] {
+        struct L { std::vector<int> wrap, chain; std::vector<std::string> wrapN, chainN, condN; std::vector<const char*> wrapP, chainP, condP; } l;
+        l.wrap = {0, dd::kWrapLongest, dd::kWrapShortest};
+        for (int n = 2; n <= 64; ++n) l.wrap.push_back(n + 1);
+        for (int n : {80, 96, 112, 128, 192, 256, 384, 512, 768, 1024}) l.wrap.push_back(n + 1);
+        l.chain = {0, dd::kWrapLongest, dd::kWrapShortest};
+        for (int n = 2; n <= 64; ++n) l.chain.push_back(n + 1);
+        for (int n : {96, 128, 192, 256}) l.chain.push_back(n + 1);
+        for (int v : l.wrap) l.wrapN.push_back(dd::wrapName(v));
+        for (int v : l.chain) l.chainN.push_back(dd::chainName(v));
+        l.condN.push_back("--");
+        for (int c = 1; c < dd::kCondAlways; ++c) l.condN.push_back(dd::conditionName(c));
+        for (auto& s : l.wrapN) l.wrapP.push_back(s.c_str());
+        for (auto& s : l.chainN) l.chainP.push_back(s.c_str());
+        for (auto& s : l.condN) l.condP.push_back(s.c_str());
+        return l;
+    }();
+    const spec::Param params[8] = {readout("WRAP", lists.wrapP.data(), int(lists.wrapP.size())), readout("CHAIN", lists.chainP.data(), int(lists.chainP.size())),
+                                   readout("TCND", lists.condP.data(), int(lists.condP.size())), blank(), blank(), blank(), blank(), blank()};
+    auto indexOf = [](const std::vector<int>& v, int x) { for (size_t i = 0; i < v.size(); ++i) if (v[i] == x) return int(i); return 0; };
+    m_out.bindCustom(params,
+        [this, indexOf](int k) {
+            const auto p = m_proc.bankPattern(editSlot());
+            if (!p) return 0;
+            if (k == 0) return indexOf(lists.wrap, p->wrapAfter);
+            if (k == 1) return indexOf(lists.chain, p->chainAfter);
+            if (k == 2) return int(p->trackCond[m_track]);
+            return 0;
+        },
+        [this](int k, int v) {
+            if (k > 2) return;
+            if (!m_proc.extrasOn()) flash("XTRA IS OFF");   // (kept; plays once XTRA is on)
+            static const char* const what[3] = {"wrap after", "chain after", "track condition"};
+            const int t = m_track;
+            doEdit(editSlot(), what[k], [&](dd::Pattern& p) {
+                if (k == 0) p.wrapAfter = uint16_t(lists.wrap[size_t(juce::jlimit(0, int(lists.wrap.size()) - 1, v))]);
+                else if (k == 1) p.chainAfter = uint16_t(lists.chain[size_t(juce::jlimit(0, int(lists.chain.size()) - 1, v))]);
+                else p.trackCond[t] = uint8_t(juce::jlimit(0, dd::kCondAlways - 1, v));
+            }, 48000 + k);
+            refreshGrid();
+        });
+}
+
+void MdEditor::swapTrack(int dir)
+{
+    const int a = m_track, b = (m_track + dir + kTracks) % kTracks;
+    const int slot = editSlot();
+    const auto cur = m_proc.bankPattern(slot);
+    const int kit = cur ? int(cur->kit) : -1;
+    int patterns = 0;
+    for (int s = 0; s < 128; ++s) {   // every pattern on this kit (and the one shown)
+        const auto p = m_proc.bankPattern(s);
+        if (!p || (s != slot && int(p->kit) != kit)) continue;
+        m_proc.editPattern(s, [a, b](mnm::mddump::Pattern& x) { x.swapTracks(a, b); });
+        ++patterns;
+    }
+    for (int s = 0; s < 32; ++s) {   // the songs' row mutes
+        if (!m_proc.bankSong(s)) continue;
+        m_proc.editSong(s, [a, b](mnm::mddump::Song& song) {
+            for (auto& r : song.rows) {
+                if (r.bytes[0] >= 128) continue;
+                uint16_t m = uint16_t((r.bytes[4] << 8) | r.bytes[5]);
+                const bool ba = (m >> a) & 1, bb = (m >> b) & 1;
+                m = uint16_t((m & ~((1u << a) | (1u << b))) | (ba ? 1u << b : 0u) | (bb ? 1u << a : 0u));
+                r.bytes[4] = uint8_t(m >> 8); r.bytes[5] = uint8_t(m & 0xFF);
+            }
+        });
+    }
+    m_proc.swapTrackSounds(a, b);
+    m_undo.clear(); m_redo.clear();   // (the pattern steps before the swap would undo it halfway: the swap again is its undo)
+    m_track = b;
+    bindTrackPages();
+    refreshGrid();
+    flash("T" + juce::String(a + 1) + " <> T" + juce::String(b + 1) + (patterns > 1 ? " (" + juce::String(patterns) + " PTNS)" : juce::String()));
 }
 
 void MdEditor::setTooltipsOn(bool on)
@@ -421,7 +503,8 @@ void MdEditor::refreshGrid()
             g.accent = p->accentEditAll ? p->accent : p->accentPerTrack[t];
             g.slide = p->slideEditAll ? p->slide : p->slidePerTrack[t];
             g.swing = p->swingEditAll ? p->swing : p->swingPerTrack[t];
-            for (int s = 0; s < 64; ++s) { g.cond[size_t(s)] = p->cond[t][s]; g.micro[size_t(s)] = p->micro[t][s]; g.retrig[size_t(s)] = p->retrig[t][s]; g.fade[size_t(s)] = p->retrigFade[t][s]; g.sound[size_t(s)] = p->soundLock[t][s]; }
+            for (int s = 0; s < 64; ++s) { g.cond[size_t(s)] = p->cond[t][s]; g.micro[size_t(s)] = p->micro[t][s]; g.retrig[size_t(s)] = p->retrig[t][s]; g.fade[size_t(s)] = p->retrigFade[t][s]; g.sound[size_t(s)] = p->soundLock[t][s]; g.condMode[size_t(s)] = p->condMode[t][s]; }
+            g.trackCond = p->trackCond[t];
             g.lockTrigs = p->lockTrigs[t];
             if (m_markMode == 7) { g.eu1 = m_gen.mode == 1 ? m_gen.n : 0; g.eu2 = m_gen.mode == 1 ? m_gen.n2 : 0; }
             g.trackLen = m_proc.extrasOn() && p->trackLen[t] > 0 && p->trackLen[t] < g.length ? int(p->trackLen[t]) : 0;
@@ -611,6 +694,8 @@ void MdEditor::showMenu()
     m.addItem(20, "COPY T" + juce::String(m_track + 1) + " MACHINE  (CTRL+SHIFT+C)");
     m.addItem(21, "PASTE MACHINE ONTO T" + juce::String(m_track + 1) + "  (CTRL+SHIFT+V)", m_soundClip.has_value());
     m.addItem(22, "CLEAR T" + juce::String(m_track + 1) + " MACHINE  (CTRL+SHIFT+DEL)");
+    m.addItem(25, "SWAP T" + juce::String(m_track + 1) + " WITH T" + juce::String((m_track + 15) % 16 + 1) + "  (CTRL+ALT+LEFT)");
+    m.addItem(26, "SWAP T" + juce::String(m_track + 1) + " WITH T" + juce::String((m_track + 1) % 16 + 1) + "  (CTRL+ALT+RIGHT)");
     m.addItem(11, "MIDI SETTINGS...");
     m.addItem(23, "SAMPLES...");
     m.addItem(24, "SOUND POOL...");
@@ -633,6 +718,7 @@ void MdEditor::showMenu()
         if (r == 11) { openMidiPanel(); return; }
         if (r == 23) { openSamplePanel(); return; }
         if (r == 24) { openPoolPanel(); return; }
+        if (r == 25 || r == 26) { swapTrack(r == 25 ? -1 : 1); return; }
         if (r == 16) { toggleMixer(); return; }
         if (r == 18) { undoKit(); return; }
         if (r == 19) { reloadKit(); return; }

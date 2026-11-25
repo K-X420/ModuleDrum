@@ -372,6 +372,19 @@ void MdProcessor::seqGenerate(const Segment& seg, double from, double to, double
     }
 }
 
+// The steps after which the playing segment hands over to a queued pattern: the next end of its pass, or with CHAIN
+// AFTER (an extra) of its chain period, past clock c0 (atLeastOne: the period that is starting counts)
+int64_t MdProcessor::chainEndSteps(double c0, bool atLeastOne) const
+{
+    const auto& pl = m_seg.player;
+    const bool ext = extrasOn();
+    const double len = pl.chainClocks(ext);
+    const double periods = std::floor((c0 - m_seg.origin) / len) + 1.0;
+    const double n = atLeastOne ? juce::jmax(1.0, periods) : periods;
+    if (len == pl.lengthClocks()) return int64_t(n) * pl.span();   // (the pass, as the MD)
+    return int64_t(std::ceil(n * len / pl.clocksPerStep() - 1e-9));
+}
+
 // Once per host block, before the MIDI: the trigs in this block, timed from the host's position (clock = quarter
 // notes x 24). Playback follows the transport; at a jump in the position (a loop, a locate), a start, or a new MODE /
 // SONG / bank, it is placed again as if it had played from the start of the timeline: PATTERN = the pattern looping
@@ -507,15 +520,11 @@ void MdProcessor::scheduleSequencer(int n, double ratio)
                 if (!m_seg.valid) {   // nothing playing: the new pattern at once, in step with the timeline
                     const double origin = std::floor(c0 / 96.0) * 96.0;
                     seqNext(origin, bank.get(), bank, engineAt(c0), false);
-                } else if (m_seg.steps < 0) {   // ends at the end of its pass
-                    const double len = m_seg.player.lengthClocks();
-                    m_seg.steps = int64_t(std::floor((c0 - m_seg.origin) / len) + 1.0) * m_seg.player.span();
+                } else if (m_seg.steps < 0) {   // ends at the end of its pass (CHAIN AFTER: of its chain period)
+                    m_seg.steps = chainEndSteps(c0, false);
                 }
             } else if (m_chainLen.load() > 1) {   // a chain: each pass ends (at least the pass that is starting)
-                if (m_seg.valid && m_seg.steps < 0) {
-                    const double len = m_seg.player.lengthClocks();
-                    m_seg.steps = juce::jmax<int64_t>(1, int64_t(std::floor((c0 - m_seg.origin) / len) + 1.0)) * m_seg.player.span();
-                }
+                if (m_seg.valid && m_seg.steps < 0) m_seg.steps = chainEndSteps(c0, true);
             } else if (m_seg.steps >= 0 && m_seg.endClock() > c0) {
                 m_seg.steps = -1;   // the queue was taken back: play on
             }

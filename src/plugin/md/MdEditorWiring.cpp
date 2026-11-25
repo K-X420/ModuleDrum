@@ -154,18 +154,27 @@ void MdEditor::wireKeys()
         if (first) ++m_paintStroke;
         const int t = m_track;
         const auto p = m_proc.bankPattern(editSlot());
-        if (!p || !((p->trigs[t] >> s) & 1)) { if (first) flash("NO TRIG"); return; }   // extras belong to a trig
+        const uint64_t owners = p ? (kind == 0 ? p->trigs[t] | p->lockTrigs[t] : p->trigs[t]) : 0;   // (a condition: a trigless lock's too)
+        if (!((owners >> s) & 1)) { if (first) flash("NO TRIG"); return; }   // extras belong to a trig
         static const char* const names[4] = {"condition", "micro-timing", "retrig", "sound lock"};
         const int v = on ? m_lastExtra[size_t(kind)] : 0;
-        const uint64_t steps = heldTargets(s) & p->trigs[t];   // a held step: every held step (with a trig)
+        const uint64_t steps = heldTargets(s) & owners;   // a held step: every held step (with a trig)
         doEdit(editSlot(), names[kind], [&](mnm::mddump::Pattern& x) { for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) setStepExtra(x, t, q, kind, v); }, 20000 + (m_paintStroke & 0xFFFF));
         refreshGrid();
     };
     m_keys.onExtraWheel = [this](int s, int kind, int delta, bool alt) {   // the value, as a knob turned on a held trig
         const int t = m_track;
         const auto p = m_proc.bankPattern(editSlot());
-        if (!p || !((p->trigs[t] >> s) & 1)) { flash("NO TRIG"); return; }
         namespace dd = mnm::mddump;
+        if (p && kind == 0 && alt) {   // CONDITION, Shift+wheel: the track's own condition (for its trigs without one)
+            const int c = juce::jlimit(0, dd::kCondAlways - 1, int(p->trackCond[t]) + delta);
+            doEdit(editSlot(), "track condition", [&](dd::Pattern& x) { x.trackCond[t] = uint8_t(c); }, 48002);
+            flash("T" + juce::String(t + 1) + " " + (c ? juce::String(dd::conditionName(c)) : juce::String("NO COND")));
+            refreshGrid();
+            return;
+        }
+        const uint64_t owners = p ? (kind == 0 ? p->trigs[t] | p->lockTrigs[t] : p->trigs[t]) : 0;
+        if (!((owners >> s) & 1)) { flash("NO TRIG"); return; }
         int v = kind == 0 ? p->cond[t][s] : kind == 1 ? p->micro[t][s] : kind == 2 ? p->retrig[t][s] : p->soundLock[t][s];
         if (kind == 3) v = v == 0 ? m_lastExtra[3] : juce::jlimit(1, dd::kPoolSlots, v + delta);
         else if (kind == 0) v = v == 0 ? m_lastExtra[0] : juce::jlimit(0, dd::kConditions - 1, v + delta);
@@ -175,7 +184,10 @@ void MdEditor::wireKeys()
         else v = dd::makeRetrig(juce::jlimit(0, 7, dd::retrigRate(uint8_t(v)) + delta), dd::retrigSteps(uint8_t(v)));
         if (v != 0) m_lastExtra[size_t(kind)] = v;   // the next click sets this
         static const char* const names[4] = {"condition", "micro-timing", "retrig", "sound lock"};
-        doEdit(editSlot(), names[kind], [&](dd::Pattern& x) { const uint64_t steps = heldTargets(s) & x.trigs[t]; for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) setStepExtra(x, t, q, kind, v); }, 40000 + kind * 64 + s);
+        doEdit(editSlot(), names[kind], [&](dd::Pattern& x) {
+            const uint64_t steps = heldTargets(s) & (kind == 0 ? x.trigs[t] | x.lockTrigs[t] : x.trigs[t]);
+            for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) setStepExtra(x, t, q, kind, v);
+        }, 40000 + kind * 64 + s);
         flash(kind == 3 ? poolSay(v) : extraText(kind, v));
         refreshGrid();
     };
@@ -203,7 +215,16 @@ void MdEditor::wireKeys()
         const int t = m_track;
         const auto p = m_proc.bankPattern(editSlot());
         if (!p) return;
-        if (kind == 1) {   // TIME: the track's speed (slowest to fastest)
+        if (kind == 0) {   // CONDITION: what the trig's condition decides: its sound and locks, its sound, its locks
+            if (!((p->trigs[t] >> s) & 1)) { flash("NO TRIG"); return; }
+            const int m = (int(p->condMode[t][s]) + (delta > 0 ? 1 : 2)) % 3;
+            doEdit(editSlot(), "condition target", [&](dd::Pattern& x) {
+                const uint64_t steps = heldTargets(s) & x.trigs[t];
+                for (int q = 0; q < 64; ++q) if ((steps >> q) & 1) x.condMode[t][q] = uint8_t(m);
+            }, 48003 + s);
+            static const char* const say[3] = {"COND: TRIG+LOCKS", "COND: TRIG ONLY", "COND: LOCKS ONLY"};
+            flash(say[m]);
+        } else if (kind == 1) {   // TIME: the track's speed (slowest to fastest)
             static const int order[dd::kTrackSpeeds] = {6, 5, 4, 3, 0, 2, 1};
             int i = 0;
             while (i < dd::kTrackSpeeds - 1 && order[i] != p->trackSpeed[t]) ++i;

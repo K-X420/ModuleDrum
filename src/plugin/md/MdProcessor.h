@@ -78,6 +78,9 @@ public:
     // hold: unknown bytes such as trig groups and the LFOs' running state come from the kit last loaded), loading a
     // kit or one track's sound by catalog id, and which ones are loaded.
     mnm::mddump::Kit captureMdKit() const;
+    // TRACK SWAP: tracks a and b trade their sounds (machine, knobs, level, LFO, trig / mute groups, output, mute, L),
+    // LFOs and groups aimed at either follow, and so do their scene locks. The patterns are the editor's part.
+    void swapTrackSounds(int a, int b);
     int loadMdKit(const juce::String& key, const mnm::mddump::Kit& kit, const juce::String& name);   // returns emptied tracks
     void setLoadedKit(const juce::String& key, const juce::String& name);   // after a save: the new kit is the loaded one
     juce::String loadedKitKey() const { return m_kitKey; }
@@ -562,6 +565,7 @@ private:
     int m_ptnHeldNote = -1, m_ptnMomentBack = -1, m_ptnJump = -1;
     // PATTERN CHANGE: how the jump to m_ptnJump starts (DIRECT JUMP keeps the position), and TEMP JUMP's way back
     int m_jumpMode = kChangeDirectStart, m_tempReturn = -1;
+    int64_t chainEndSteps(double c0, bool atLeastOne) const;
     std::atomic<float>* m_ptnChange = nullptr;
     std::atomic<int> m_ptnPending{-1};   // cleared by the message thread once the parameter shows it
     bool m_seqHalted = false;

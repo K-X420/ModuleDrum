@@ -46,8 +46,8 @@ int mdXtraTest(TestEnv& env, const char* value)
         check(dd::encodeDump(d, false) == dd::encodePattern(x), "exported (pure MD): the extras left out");
         check(dd::encodePatternExtras(plain).empty(), "no extras: no message");
         check(dd::conditionName(11) == "50%" && dd::conditionName(dd::kCondFill) == "FILL" && dd::conditionName(dd::kCondRatio) == "1:2"
-              && dd::conditionName(dd::kConditions - 1) == "8:8" && dd::retrigName(dd::makeRetrig(3, 2)) == "1/64x2",
-              "names: 50%, FILL, 1:2, 8:8, 1/64x2");
+              && dd::conditionName(dd::kCondAlways - 1) == "8:8" && dd::conditionName(dd::kCondAlways) == "ALWAYS" && dd::retrigName(dd::makeRetrig(3, 2)) == "1/64x2",
+              "names: 50%, FILL, 1:2, 8:8, ALWAYS, 1/64x2");
         auto c = blankPattern(0, 16);
         c.copySteps(x, 0, 0, 16, -1, -1);
         check(c.cond[0][4] == 11 && c.micro[1][2] == -6, "copied steps take their extras");

@@ -83,8 +83,10 @@ public:
         uint64_t lockTrigs = 0;           // EXTRAS: trigless locks (an empty key with a box)
         std::array<int8_t, 64> fade{};    // RETRIG: each retrig's fade
         std::array<uint8_t, 64> sound{};  // SOUND LOCK: the pool slot + 1, 0 none
+        std::array<uint8_t, 64> condMode{};   // CONDITION: what each trig's condition decides (kCondBoth / TrigOnly / LocksOnly)
+        int trackCond = 0;                // CONDITION: the track's own, for its trigs without one (shown framed, not filled)
         int eu1 = 0, eu2 = 0;             // GENERATE: the Euclidean generators' pulses (keys E1 / E2), 0 none
-        bool operator==(const Grid& o) const { return lockTrigs == o.lockTrigs && fade == o.fade && sound == o.sound && eu1 == o.eu1 && eu2 == o.eu2 && trackLen == o.trackLen && lane == o.lane && laneKit == o.laneKit && heldSet == o.heldSet && mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
+        bool operator==(const Grid& o) const { return lockTrigs == o.lockTrigs && fade == o.fade && sound == o.sound && condMode == o.condMode && trackCond == o.trackCond && eu1 == o.eu1 && eu2 == o.eu2 && trackLen == o.trackLen && lane == o.lane && laneKit == o.laneKit && heldSet == o.heldSet && mark == o.mark && on == o.on && page == o.page && length == o.length && play == o.play && held == o.held && trigs == o.trigs && accent == o.accent && slide == o.slide && swing == o.swing && locks == o.locks && cond == o.cond && retrig == o.retrig && micro == o.micro; }
         int extra(int s) const { return mark == 4 ? cond[size_t(s)] : mark == 5 ? micro[size_t(s)] : mark == 6 ? retrig[size_t(s)] : mark == 9 ? sound[size_t(s)] : 0; }
         bool extrasWindow() const { return (mark >= 4 && mark <= 6) || mark == 9; }
         int extraKind() const { return mark == 9 ? 3 : mark - 4; }   // the onExtra* kind: 0 condition, 1 micro, 2 retrig, 3 sound lock
@@ -274,6 +276,9 @@ public:
     MdSongEditor& devSongEditor() { return m_songEd; }
     void devOpenMidi(int page = 0) { openMidiPanel(); m_midiPanel.setPage(page); }
     void devToggleScenes() { toggleScenes(); }
+    void devSwapTrack(int dir) { swapTrack(dir); }
+    void devOutTab(int tab) { m_out.setTabs({"OUT", "PTN", "XTR"}, tab, [this](int t) { bindOutPage(t); }); bindOutPage(tab); }
+    int devTrack() const { return m_track; }
     void devOpenPool() { openPoolPanel(); m_poolPanel.select(2); }
     void devHoldScene(int s) { holdScene(s); }
     one::KnobPage& devSynPage() { return m_syn; }
@@ -417,6 +422,8 @@ private:
     void openSamplePanel();
     MdPoolPanel m_poolPanel;
     void openPoolPanel();
+    void swapTrack(int dir);
+    void bindXtraPage();   // TRACK SWAP: the selected track with its neighbour (sound, sequence, scenes); again: back
     juce::String poolSay(int v) const;   // "P5 KICK" (v = slot + 1)
     void wirePoolPanel();
     static int romSlotIndex(int rom) { return rom < 32 ? rom : rom + 16; }   // ROM-01..48 (0..47) -> the UW slot

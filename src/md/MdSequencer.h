@@ -66,8 +66,18 @@ public:
     int stepOf(int64_t stepIndex) const { return m_start + int(stepIndex % m_span); }
     // With the extras, a track with its own length (shorter than the pass) loops there
     int spanOf(int track, bool extras) const { const int l = m_p.trackLen[track]; return extras && l > 0 && l < m_span ? l : m_span; }
-    // stepIndex here counts the track's own steps (with the extras a track can have its own speed, trackStep)
-    int stepOf(int64_t stepIndex, int track, bool extras) const { return m_start + int(stepIndex % spanOf(track, extras)); }
+    // stepIndex here counts the track's own steps (with the extras a track can have its own speed, trackStep); with
+    // WRAP AFTER every track starts over at step 1 each wrap
+    int stepOf(int64_t stepIndex, int track, bool extras) const { return m_start + int(localStep(stepIndex, track, extras) % spanOf(track, extras)); }
+    // The track's step counted from the start of its wrap (WRAP AFTER; without one: the step itself), and which wrap
+    int64_t localStep(int64_t stepIndex, int track, bool extras, int64_t* wrap = nullptr) const;
+    // A track's loop in clocks (its length at its speed); WRAP AFTER's period (0 = none) and CHAIN AFTER's (when a
+    // queued pattern can take over: the pass, every n steps, or the longest / shortest track's loop)
+    double loopClocks(int track, bool extras) const { return double(spanOf(track, extras)) * trackStep(track, extras); }
+    double wrapClocks(bool extras) const { return extras ? m_wrapClocks : 0.0; }
+    double chainClocks(bool extras) const;
+    // The condition a trig (or a trigless lock) plays by: its own, else (a trig) its track's; kCondAlways: none
+    int condOf(int track, int step) const;
     // A step of the track in clocks: the pattern's, or with the extras the track's own speed of it
     double trackStep(int track, bool extras) const { return trackStepClocks(m_p, track, extras); }
     static double trackStepClocks(const mddump::Pattern& p, int track, bool extras);
@@ -102,6 +112,8 @@ private:
     mddump::Pattern m_p;
     int m_len = 16, m_step = 6, m_start = 0, m_span = 16;
     double m_swing = 0;
+    double m_wrapClocks = 0;   // WRAP AFTER's period in clocks (with the extras), 0 = none
+    double extremeLoop(bool longest) const;   // the longest / shortest loop of the tracks that play
     int m_swingWhole = 0;   // the OS's integer clocks of the swing delay (slide durations)
     std::array<std::array<int16_t, 24>, 16> m_row{};   // lock row per (track, param), -1 = not locked
 };

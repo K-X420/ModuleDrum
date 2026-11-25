@@ -149,7 +149,9 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
         else dottedFrame(cv, r.getX(), r.getY(), r.getWidth(), r.getHeight());
         const bool ink = !trig;
         cv.text(spec::kFontBold8, juce::String(s + 1).toRawUTF8(), r.getX() + 3, r.getY() + 3, ink);
-        const bool valueHere = extras && gr.extra(s) != 0;   // (a value is always on a trig: no trig dot under it)
+        // CONDITION: a trig without one of its own shows its track's (framed, not filled)
+        const bool inherited = gr.mark == 4 && gr.extra(s) == 0 && hasTrig && gr.trackCond != 0;
+        const bool valueHere = extras && (gr.extra(s) != 0 || inherited);   // (a value is always on a trig: no trig dot under it)
         if (((gr.mark > 0 && gr.mark < 7) || gr.mark == 9) && hasTrig && !valueHere) cv.fillRect(r.getCentreX() - 2, r.getBottom() - 8, 4, 4, ink);
         if (gr.mark == 0 && ((gr.lockTrigs >> s) & 1)) {   // a trigless lock: a hollow box
             const int bx = r.getCentreX() - 3, by = r.getBottom() - 10;
@@ -158,9 +160,13 @@ void MdTrackKeys::paintGrid(LcdCanvas& cv)
         if (gr.mark == 7 && (i + 1 == gr.eu1 || i + 1 == gr.eu2))   // GENERATE: the generators' pulse counts
             cv.textCentred(spec::kFontTiny3x5, i + 1 == gr.eu1 && i + 1 == gr.eu2 ? "E12" : i + 1 == gr.eu1 ? "E1" : "E2", r.getX() + 1, r.getWidth() - 1, r.getBottom() - 7, ink);
         if (valueHere) {   // the value, a line each part so it fits the key: "50%" / "+6" / RETRIG "1/64", "X4" (its steps), "V-32" (its fade)
-            const int v = gr.extra(s);
+            const int v = inherited ? gr.trackCond : gr.extra(s);
             std::vector<std::string> lines;
-            if (gr.mark == 4) lines.push_back(mnm::mddump::conditionName(v));
+            if (gr.mark == 4) {
+                lines.push_back(mnm::mddump::conditionName(v));
+                if (const int m = gr.condMode[size_t(s)]; m) lines.push_back(m == 1 ? "TRIG" : "LOCKS");   // what it decides (BOTH: nothing shown)
+                if (inherited) lines.push_back("TRK");
+            }
             else if (gr.mark == 5) lines.push_back((v > 0 ? "+" : "") + std::to_string(v));
             else if (gr.mark == 9) lines.push_back("P" + std::to_string(v));   // the pool slot
             else {
@@ -442,7 +448,8 @@ void MdTrackKeys::mouseMove(const juce::MouseEvent& e)
     if (m_grid.on && m_grid.mark >= 4) {
         static const char* const what[4] = {"Condition", "Micro-timing", "Retrig", "Sound lock (the trig plays a pool sound: MENU > SOUND POOL)"};
         setTooltip(juce::String(what[m_grid.extraKind()]) + ". Click: set / clear. Wheel: change"
-                   + (m_grid.mark == 6 ? ". Shift+wheel: length. Alt+wheel: fade" : m_grid.mark == 5 ? ". Alt+wheel: the track's speed" : ""));
+                   + (m_grid.mark == 6 ? ". Shift+wheel: length. Alt+wheel: fade" : m_grid.mark == 5 ? ". Alt+wheel: the track's speed"
+                      : m_grid.mark == 4 ? ". Alt+wheel: what it decides (trig + locks / trig only / locks only). Shift+wheel: the track's own condition" : ""));
         return;
     }
     if (m_grid.on) {

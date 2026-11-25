@@ -87,6 +87,7 @@ int main(int argc, char** argv)
     if (const char* v = std::getenv("MD_XTRA_TEST")) return test::mdXtraTest(env, v);
     if (const char* v = std::getenv("MD_XTRA2_TEST")) return test::mdXtra2Test(env, v);
     if (const char* v = std::getenv("MD_POOL_TEST")) return test::mdPoolTest(env, v);
+    if (const char* v = std::getenv("MD_SEQX_TEST")) return test::mdSeqXTest(env, v);
     if (const char* v = std::getenv("MD_TOOLS_TEST")) return test::mdToolsTest(env, v);
     if (const char* v = std::getenv("MD_BENCH")) return test::mdBench(env, v);
     if (const char* v = std::getenv("MD_DEMO")) return test::mdDemo(env, v);
@@ -443,6 +444,10 @@ int main(int argc, char** argv)
                 med->devToggleScenes();
                 if (std::strcmp(sc, "hold") == 0) med->devHoldScene(2);
                 med->refresh();
+            }
+            if (std::getenv("MD_UI_XTR")) {   // dev: the XTR tab, with WRAP 16, CHAIN 4 and T1's condition 50%
+                proc.editPattern(0, [](mnm::mddump::Pattern& x) { x.wrapAfter = 17; x.chainAfter = 5; x.trackCond[0] = 11; });
+                med->devOutTab(2);
             }
             if (std::getenv("MD_UI_POOL")) {   // dev: the sound pool open, a few sounds in it
                 const char* names[6] = {"BD HARD", "SN ROLL", "RIM VERB", "TOM LOW", "HAT OPEN", "CLAP WIDE"};

@@ -15,6 +15,8 @@ void PatternPlayer::set(const mddump::Pattern& p)
     m_swingWhole = int((int64_t(m_step) * int64_t(p.swingAmount)) >> 14);
     for (int t = 0; t < 16; ++t)
         for (int q = 0; q < 24; ++q) m_row[size_t(t)][size_t(q)] = int16_t(p.lockRow(t, q));
+    const int w = p.wrapAfter;
+    m_wrapClocks = w == 0 ? 0.0 : w == mddump::kWrapLongest ? extremeLoop(true) : w == mddump::kWrapShortest ? extremeLoop(false) : double(w - 1) * m_step;
 }
 
 void PatternPlayer::setRange(int start, int end)
@@ -22,6 +24,46 @@ void PatternPlayer::setRange(int start, int end)
     m_start = std::clamp(start, 0, m_len - 1);
     if (end <= m_start || end > m_len) end = m_len;
     m_span = end - m_start;
+    if (m_p.wrapAfter == mddump::kWrapLongest || m_p.wrapAfter == mddump::kWrapShortest) m_wrapClocks = extremeLoop(m_p.wrapAfter == mddump::kWrapLongest);
+}
+
+double PatternPlayer::extremeLoop(bool longest) const
+{
+    double v = -1.0;
+    for (int t = 0; t < 16; ++t) {
+        if (!m_p.trigs[t] && !m_p.lockTrigs[t]) continue;
+        const double l = loopClocks(t, true);
+        if (v < 0 || (longest ? l > v : l < v)) v = l;
+    }
+    return v > 0 ? v : double(m_span) * m_step;
+}
+
+double PatternPlayer::chainClocks(bool extras) const
+{
+    const int c = m_p.chainAfter;
+    if (c == 0) return lengthClocks();
+    if (c == mddump::kWrapLongest || c == mddump::kWrapShortest) return extras ? extremeLoop(c == mddump::kWrapLongest) : lengthClocks();
+    return double(c - 1) * m_step;
+}
+
+int64_t PatternPlayer::localStep(int64_t k, int t, bool extras, int64_t* wrap) const
+{
+    if (wrap) *wrap = 0;
+    if (!extras || m_wrapClocks <= 0.0) return k;
+    const double sc = trackStep(t, true);
+    const int64_t w = int64_t(std::floor((double(k) * sc + 1e-9) / m_wrapClocks));
+    const int64_t first = int64_t(std::ceil(double(w) * m_wrapClocks / sc - 1e-9));   // the track's first step of that wrap
+    if (wrap) *wrap = w;
+    return k - first;
+}
+
+int PatternPlayer::condOf(int t, int step) const
+{
+    if (step < 0 || step >= 64) return 0;
+    const int c = m_p.cond[t][step];
+    if (c == mddump::kCondAlways) return 0;
+    if (c) return c;
+    return hasTrig(t, step) ? m_p.trackCond[t] : 0;   // (a trigless lock takes only its own)
 }
 
 int PatternPlayer::lock(int track, int param, int step) const
@@ -95,11 +137,18 @@ bool refersBack(int c) { return c == mddump::kCondPre || c == mddump::kCondNotPr
 
 bool PatternPlayer::plainCondition(int64_t k, int t, const TrigContext& ctx) const
 {
-    const int c = m_p.cond[t][stepOf(k, t, true)];
+    const int c = condOf(t, stepOf(k, t, true));
     if (c == 0) return true;
     if (const int pct = mddump::conditionPercent(c); pct > 0)
         return int(mix(ctx.seed ^ mix(uint32_t(k) * 16u + uint32_t(t) + 0x9E3779B9u)) % 100u) < pct;
-    const int64_t pass = k / spanOf(t, true);   // the track's own passes
+    // the track's own passes (with WRAP AFTER: counted on from wrap to wrap, a wrap holding as many as it starts)
+    int64_t wrap = 0;
+    const int64_t local = localStep(k, t, true, &wrap), span = spanOf(t, true);
+    int64_t pass = local / span;
+    if (wrap > 0) {
+        const int64_t perWrap = int64_t(std::ceil(m_wrapClocks / trackStep(t, true) - 1e-9));
+        pass += wrap * ((perWrap + span - 1) / span);
+    }
     switch (c) {
         case mddump::kCondFill: return ctx.fill;
         case mddump::kCondNotFill: return !ctx.fill;
@@ -117,7 +166,7 @@ bool PatternPlayer::lastCondition(int64_t k, int t, bool inclusive, const TrigCo
     if (t < 0 || t > 15) return false;
     const int64_t stop = std::max<int64_t>(0, k - 64);
     for (int64_t j = inclusive ? k : k - 1; j >= stop; --j) {
-        const int s = stepOf(j, t, true), c = m_p.cond[t][s];
+        const int s = stepOf(j, t, true), c = condOf(t, s);
         if (hasTrig(t, s) && c != 0 && !refersBack(c)) return plainCondition(j, t, ctx);
     }
     return false;
@@ -132,7 +181,7 @@ int64_t PatternPlayer::neighbourStep(int64_t k, int t) const
 
 bool PatternPlayer::conditionPlays(int64_t k, int t, const TrigContext& ctx) const
 {
-    const int c = m_p.cond[t][stepOf(k, t, true)];
+    const int c = condOf(t, stepOf(k, t, true));
     switch (c) {
         case mddump::kCondPre: return lastCondition(k, t, false, ctx);
         case mddump::kCondNotPre: return !lastCondition(k, t, false, ctx);
@@ -178,9 +227,14 @@ void PatternPlayer::trigs(double from, double to, std::vector<SeqTrig>& out, int
                 const double gap = r ? sc / mddump::retrigHits(r) : 0.0;
                 const double last = c + gap * std::max(0, hits - 1);
                 if (last < from || c >= to) continue;
-                if (!conditionPlays(k, t, ctx)) continue;
+                // the condition: a trigless lock's gates it; a trig's gates its sound and its locks (BOTH), its sound only
+                // (TRIG: a trig that does not play still sets its locks) or its locks only (LOCKS: the sound plays)
+                const bool pass = conditionPlays(k, t, ctx);
+                const int mode = trig ? m_p.condMode[t][step] : mddump::kCondBoth;
+                if (!pass && mode == mddump::kCondBoth) continue;
                 SeqTrig e = trigAt(k, t, true);
-                if (lockTrig) {   // its locks only, there (no slide from it)
+                if (!pass && mode == mddump::kCondLocksOnly) { e.locks.fill(-1); e.slideMask = 0; e.soundLock = 0; }   // the sound, no locks
+                if (lockTrig || (!pass && mode == mddump::kCondTrigOnly)) {   // its locks only, there (no slide from it)
                     e.clock = c;
                     e.lockOnly = true;
                     e.slideMask = 0;
