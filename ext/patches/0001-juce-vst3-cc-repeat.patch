@@ -1,5 +1,5 @@
 diff --git a/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp b/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp
-index efb9c1589..1cf1403be 100644
+index efb9c15..f9a89ae 100644
 --- a/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp
 +++ b/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp
 @@ -3596,7 +3596,7 @@ public:
